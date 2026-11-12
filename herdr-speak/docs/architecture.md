@@ -35,6 +35,7 @@ flowchart LR
 | `mini.py` | Mini player pane: opens, comes to the current tab, or closes (`mini-player`); follow mode on focus events; records its pane every 2 s via `herdr pane current --current`, which keeps working after Herdr moves the pane |
 | `ui.py` | Drawing, keys, and SGR mouse clicks: segments with a key become clickable hotspots |
 | `shortcuts.py` | Reads the user's Speak bindings from Herdr's `config.toml` |
+| `bindings.py` | Writes Speak's key bindings and tab bar entry into Herdr's `config.toml` (free keys only, marked block, backup, reload check); `install.sh` calls it |
 | `media.py` | Player only: macOS Now Playing and remote commands via PyObjC; command mapping kept PyObjC-free for tests |
 | `icons.py` | Nerd Font and plain icon sets, one cell each, and Ghostty detection for `auto` |
 | `config.py`, `catalog.py` | Settings, languages, voices, pinned model files |
@@ -70,6 +71,7 @@ The data directory must stay at a short path: espeak-ng ignores data paths over 
 | `test_panel`, `test_ui` | any 3.9+ | Drive the panel and mini player in a pseudo-terminal, with keys and mouse clicks |
 | `test_client` | any 3.9+ | The `say` fallback's queue and stop; pre-loading never failing |
 | `test_mini` | any 3.9+ | Opening, bringing here, closing, and following, with Herdr mocked |
+| `test_bindings` | any 3.9+ | Config edits: fresh and existing configs, taken keys, idempotence, removal, rejected reloads; TOML validity on 3.11+ |
 | `test_media` | any 3.9+ | Media key and Control Center command mapping and Now Playing fields |
 | `test_player` | with numpy | Queue, pause, seek, errors, audio-stream races, and the socket protocol with a fake engine and no audio device |
 | `test_kokoro` | runtime installed | Real Kokoro synthesis (English, Spanish, over-long text) and `say` |

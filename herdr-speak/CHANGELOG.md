@@ -6,6 +6,8 @@ All notable changes to Speak. The format follows [Keep a Changelog](https://keep
 
 ### Added
 
+- One-line install: `curl … install.sh | bash` installs the plugin and adds the key bindings and tab bar indicator.
+- Speak adds its key bindings to Herdr's config itself (`speak.py bind`, panel Setup tab): only free keys, in one marked block, with a backup and Herdr's reload as a check; `speak.py unbind` removes them.
 - Redesigned panel: Player, Auto-read, Voice, Shortcuts, and Setup tabs, with sections, dropdowns, a clickable voice list, and speed steppers. It reopens on the last tab.
 - Shortcuts tab listing your Speak key bindings, read from Herdr's `config.toml`.
 - Mini player (`mini-player` action): a small pane in the standard media-player layout (title, elapsed · progress · total, restart / back / play-pause / forward / next / stop) that stays open while you work. `prefix+m` brings it to the current tab or workspace, or closes it where it is; optional follow mode moves it whenever you switch tabs.

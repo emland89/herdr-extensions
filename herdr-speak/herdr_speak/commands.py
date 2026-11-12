@@ -115,6 +115,25 @@ description = "Speak: forward 5 seconds"
     return 0
 
 
+def bind_keys() -> int:
+    from .bindings import bind
+    from .shortcuts import describe_key, herdr_config_path
+
+    result = bind()
+    if result["changed"]:
+        added = ", ".join(describe_key(key) for key in result["added"]) or "none"
+        print(f"Added Speak key bindings to {herdr_config_path()}: {added}")
+        if result.get("tab_bar"):
+            print("Added the Speak indicator to Herdr's tab bar.")
+        if result.get("backup"):
+            print(f"Backup of the previous config: {result['backup']}")
+    else:
+        print("Key bindings already set up; nothing changed.")
+    for note in result["notes"]:
+        print(f"Note: {note}")
+    return 0
+
+
 def doctor() -> int:
     config = settings.load()
     checks = [
@@ -139,7 +158,8 @@ def main(argv: list) -> int:
     parser = argparse.ArgumentParser(prog="speak.py", description="Speak: hear your coding agents in Herdr.")
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("last", "selection", "stop", "toggle-pause", "forward", "back", "skip", "toggle-auto", "event",
-                 "panel", "open-panel", "mini", "mini-player", "follow", "keybindings", "doctor", "statusline"):
+                 "panel", "open-panel", "mini", "mini-player", "follow", "keybindings", "bind", "unbind", "doctor",
+                 "statusline"):
         sub.add_parser(name)
     setup_parser = sub.add_parser("setup", help="install the Kokoro voice runtime, model, and voices")
     setup_parser.add_argument("--voice", action="append", help="also install this Kokoro voice (repeatable)")
@@ -191,6 +211,13 @@ def main(argv: list) -> int:
             return setup(arguments)
         if command == "keybindings":
             return keybindings()
+        if command == "bind":
+            return bind_keys()
+        if command == "unbind":
+            from .bindings import unbind
+
+            print("Removed Speak's key bindings." if unbind() else "No Speak-managed key bindings found.")
+            return 0
         if command == "doctor":
             return doctor()
         if command == "statusline":

@@ -11,11 +11,17 @@ Hear your coding agents. Speak is a [Herdr](https://herdr.dev) plugin that reads
 
 ## Quick start
 
-1. Install: `herdr plugin install emland89/herdr-extensions/herdr-speak`
-2. Add the [key bindings](#key-bindings) below to `~/.config/herdr/config.toml` and run `herdr server reload-config`.
-3. In a pane running pi, Claude Code, or Codex, press `prefix+t` to hear the last response. `prefix+shift+a` opens the panel, where you can turn on auto-read and pick a voice.
+```bash
+curl -fsSL https://raw.githubusercontent.com/emland89/herdr-extensions/main/herdr-speak/install.sh | bash
+```
+
+The script installs the plugin with Herdr (which downloads the voice), adds the [key bindings](#key-bindings) and the [tab bar indicator](#tab-bar-indicator) to your Herdr config, and reloads it. Read it first if you like: [install.sh](install.sh). Run it again to update.
+
+Then, in a pane running pi, Claude Code, or Codex, press `prefix+t` to hear the last response. `prefix+shift+a` opens the panel, where you can turn on auto-read and pick a voice.
 
 ## Install
+
+The quick start script does everything. To install with Herdr alone:
 
 ```bash
 herdr plugin install emland89/herdr-extensions/herdr-speak
@@ -27,7 +33,9 @@ Requirements: macOS 13 or newer, Herdr 0.9.5 or newer, and `python3` 3.9+ (inclu
 
 ### Key bindings
 
-Herdr plugins can't add key bindings, so add these to `~/.config/herdr/config.toml` and run `herdr server reload-config` (or print them with `python3 speak.py keybindings` from the plugin folder):
+Herdr plugins can't declare key bindings, so Speak writes them into `~/.config/herdr/config.toml` itself: the quick start script does it, and so do the panel's **Add free keys** button (Setup tab) and `python3 speak.py bind` in the plugin folder (`herdr plugin list` shows it). It adds one marked block at the end of the file, only for keys that are free (not a Herdr default, not used in your config) and actions you haven't bound yourself; backs up the file to `config.toml.speak-backup`; and reloads Herdr, restoring the backup if Herdr reports a problem. **Remove** in the panel or `speak.py unbind` takes them out again; do that before uninstalling.
+
+The bindings it adds, if you'd rather add them by hand:
 
 ```toml
 [[keys.command]]
@@ -79,7 +87,7 @@ Herdr's Settings screen and right-click menus can't show plugin items (their con
 
 ### Tab bar indicator
 
-Add this entry to `tab_bar_right` under `[ui]` to see what's playing (`▶ Claude in api 0:42`) and whether auto-read is on (`♪ auto-read`):
+Speak's key setup adds this when you have no `tab_bar_right` list yet; otherwise add the entry to yours. It shows what's playing (`▶ Claude in api 0:42`) and whether auto-read is on (`♪ auto-read`):
 
 ```toml
 [ui]
@@ -217,8 +225,9 @@ Speech is synthesized on your Mac. Speak sends nothing anywhere; the only networ
 | `~/.local/state/herdr/plugins/emilapps.speak` | Player status, the tab bar line, and `speak.log` |
 
 ```bash
+python3 "$(herdr plugin list --json | python3 -c 'import json,sys; print(next(p["plugin_root"] for p in json.load(sys.stdin)["result"]["plugins"] if p["plugin_id"] == "emilapps.speak"))')/speak.py" unbind
 herdr plugin uninstall emilapps.speak
-rm -rf ~/.local/share/herdr-speak   # Herdr keeps plugin data; remove the voice too
+rm -rf ~/.local/share/herdr-speak ~/.cache/herdr-speak   # Herdr keeps plugin data; remove the voice too
 ```
 
 ## Troubleshooting

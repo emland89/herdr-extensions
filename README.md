@@ -8,11 +8,13 @@ Plugins for [Herdr](https://herdr.dev), the terminal workspace manager for codin
 
 ## Install a plugin
 
+Speak installs with one command, which also sets up its key bindings:
+
 ```bash
-herdr plugin install emland89/herdr-extensions/herdr-speak
+curl -fsSL https://raw.githubusercontent.com/emland89/herdr-extensions/main/herdr-speak/install.sh | bash
 ```
 
-Herdr previews the plugin's commands before running anything. Each plugin's README covers its key bindings and settings; Herdr plugins can't add key bindings themselves.
+Or with Herdr alone (`herdr plugin install emland89/herdr-extensions/herdr-speak`), then add the key bindings from the plugin's README or its panel.
 
 ## Develop
 

@@ -354,6 +354,7 @@ class Panel:
                   field("Voices").add(", ".join(voices) or "none", "" if voices else DIM),
                   field("Model").add(model.name if model.exists() else "not downloaded"),
                   field("Player").add("running" if client.player_running() else "stopped (starts when needed)"),
+                  Line(), heading("Herdr keys", width), self.keys_line(),
                   Line(), heading("macOS", width),
                   checkbox("Media keys and Control Center control Speak while it plays", bool(config.get("media_keys", True)),
                            "k", "k"),
@@ -364,6 +365,16 @@ class Panel:
                   field("Settings").add(str(paths.CONFIG_FILE)),
                   field("Log").add(str(paths.LOG_FILE))]
         return lines
+
+    def keys_line(self) -> Line:
+        from .bindings import managed
+
+        line = field("Key bindings")
+        if managed():
+            line.add("added by Speak  ", GREEN)
+            return button(line, "Remove", "unbind-keys")
+        line.add("not added by Speak  ", DIM)
+        return button(line, "Add free keys", "bind-keys")
 
     def runtime_line(self, config: dict) -> Line:
         setup = runtime.setup_status()
@@ -411,6 +422,21 @@ class Panel:
         if key == "t":
             sample = catalog.language(config["language"])["sample"].format(voice=settings.voice_label(config))
             self.controls.in_background("Preparing a sample", lambda: client.speak(sample, "Voice test", config))
+            return True
+        if key in ("bind-keys", "unbind-keys"):
+            from . import bindings
+
+            try:
+                if key == "bind-keys":
+                    result = bindings.bind()
+                    added = ", ".join(shortcuts.describe_key(k) for k in result["added"])
+                    self.controls.note(f"Added: {added}" if result["changed"] else
+                                       "; ".join(result["notes"]) or "Your keys are already set up")
+                else:
+                    bindings.unbind()
+                    self.controls.note("Removed Speak's key bindings")
+            except OSError as error:
+                self.controls.note(str(error), YELLOW)
             return True
         if key == "open-mini":
             from .mini import toggle
