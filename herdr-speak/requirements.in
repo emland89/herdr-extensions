@@ -1,0 +1,19 @@
+# Runtime for the Kokoro voice and the audio player. Installed by `speak.py setup`
+# into its own environment; the plugin itself needs only the Python standard library.
+# misaki[en] would also pull in spacy-curated-transformers and PyTorch (~600 MB),
+# which the non-transformer English pipeline used here does not need.
+misaki==0.9.4
+addict==2.4.0
+regex==2026.11.9
+num2words==0.5.14
+spacy==3.8.18
+en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+espeakng-loader==0.2.4
+phonemizer-fork==3.3.2
+onnxruntime==1.31.1
+numpy==2.5.4
+sounddevice==0.5.6
+# macOS media controls (Control Center, media keys) for the player.
+pyobjc-core==13.0
+pyobjc-framework-Cocoa==13.0
+pyobjc-framework-MediaPlayer==13.0

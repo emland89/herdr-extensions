@@ -1,0 +1,107 @@
+id = "emilapps.speak"
+name = "Speak"
+version = "0.3.0"
+min_herdr_version = "0.9.5"
+description = "Hear your coding agents: read pi, Claude Code, and Codex responses aloud with a natural local voice, auto-read finished turns, pause and seek."
+platforms = ["macos"]
+
+# Installs the Kokoro voice runtime (about 600 MB) under ~/.local/share/herdr-speak.
+# It never fails the install: speech uses macOS `say` until setup succeeds, and the
+# panel can retry it. `herdr plugin link` skips build steps; run setup from the panel.
+[[build]]
+command = ["python3", "speak.py", "setup", "--build"]
+
+[[actions]]
+id = "read-last"
+title = "Speak: Read Last Response"
+description = "Read the focused pane's last pi, Claude Code, or Codex response; stops speech if playing"
+contexts = ["workspace", "pane"]
+command = ["python3", "speak.py", "last"]
+
+[[actions]]
+id = "read-selection"
+title = "Speak: Read Selection"
+description = "Read the selected text; stops speech if playing"
+contexts = ["workspace", "pane", "selection"]
+command = ["python3", "speak.py", "selection"]
+
+[[actions]]
+id = "panel"
+title = "Speak: Player and Settings"
+description = "Open the Speak panel: playback controls, auto-read, language, voice, speed"
+contexts = ["workspace", "pane"]
+command = ["python3", "speak.py", "open-panel"]
+
+[[actions]]
+id = "mini-player"
+title = "Speak: Mini Player"
+description = "Open or close a small player pane with clickable controls"
+contexts = ["workspace", "pane"]
+command = ["python3", "speak.py", "mini-player"]
+
+[[actions]]
+id = "toggle-pause"
+title = "Speak: Pause / Resume"
+contexts = ["workspace", "pane"]
+command = ["python3", "speak.py", "toggle-pause"]
+
+[[actions]]
+id = "back"
+title = "Speak: Back 5 Seconds"
+contexts = ["workspace", "pane"]
+command = ["python3", "speak.py", "back"]
+
+[[actions]]
+id = "forward"
+title = "Speak: Forward 5 Seconds"
+contexts = ["workspace", "pane"]
+command = ["python3", "speak.py", "forward"]
+
+[[actions]]
+id = "skip"
+title = "Speak: Skip to Next"
+description = "Skip the current response and play the next queued one"
+contexts = ["workspace", "pane"]
+command = ["python3", "speak.py", "skip"]
+
+[[actions]]
+id = "stop"
+title = "Speak: Stop"
+description = "Stop speech and clear the queue"
+contexts = ["workspace", "pane"]
+command = ["python3", "speak.py", "stop"]
+
+[[actions]]
+id = "toggle-auto"
+title = "Speak: Toggle Auto-Read"
+contexts = ["workspace", "pane"]
+command = ["python3", "speak.py", "toggle-auto"]
+
+# Auto-read: speaks a response when its agent finishes a turn. Returns at once while
+# auto-read is off (the default).
+[[events]]
+on = "pane.agent_status_changed"
+command = ["python3", "speak.py", "event"]
+
+# Mini player follow mode (off by default): moves the mini player to the tab in view.
+[[events]]
+on = "tab.focused"
+command = ["python3", "speak.py", "follow"]
+
+[[events]]
+on = "workspace.focused"
+command = ["python3", "speak.py", "follow"]
+
+[[panes]]
+id = "panel"
+title = "Speak"
+placement = "popup"
+width = 90
+height = "95%"
+command = ["python3", "speak.py", "panel"]
+
+[[panes]]
+id = "mini"
+title = "Speak"
+placement = "split"
+command = ["python3", "speak.py", "mini"]
