@@ -1,0 +1,12 @@
+line-length = 130
+target-version = "py39"
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+ignore = [
+  "UP006", "UP007", "UP035", "UP045",  # keep typing.Optional/List/Dict: the launcher supports Python 3.9
+  "SIM105",  # try/except/pass reads clearer than contextlib.suppress here
+]
+
+[lint.isort]
+known-first-party = ["herdr_speak", "tests"]
