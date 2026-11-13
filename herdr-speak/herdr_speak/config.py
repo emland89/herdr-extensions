@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from . import catalog, paths
+from .text import TABLE_MODES
 
 DEFAULTS = {
     # "auto" uses Kokoro once it is installed and macOS speech until then.
@@ -24,6 +25,7 @@ DEFAULTS = {
     "icons": "auto",  # "auto" (Nerd Font in Ghostty), "nerd", or "plain"
     "mini_follow": False,  # the mini player moves to the tab you switch to
     "media_keys": True,  # media keys and Control Center control Speak while it plays
+    "tables": "auto",  # "auto" (small in full, big summarized), "rows", "summary", or "skip"
 }
 AUTO_PANES = ["all", "background", "focused"]
 AUTO_PANES_LABELS = {"all": "All agents", "background": "Panes I'm not viewing", "focused": "The focused pane"}
@@ -57,6 +59,7 @@ def sanitize(config: dict) -> dict:
         "icons": lambda v: v in ("auto", "nerd", "plain"),
         "mini_follow": lambda v: isinstance(v, bool),
         "media_keys": lambda v: isinstance(v, bool),
+        "tables": lambda v: v in TABLE_MODES,
         "keep_alive_minutes": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and 0 < v <= 1440,
     }
     for key, valid in checks.items():

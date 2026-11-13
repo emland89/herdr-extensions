@@ -60,6 +60,81 @@ LANGUAGES: Dict[str, dict] = {
 }
 DEFAULT_LANGUAGE = "en-us"
 
+# How tables and symbols are spoken, per language. {size} is "5 rows"; {columns} the header names.
+_ENGLISH_SPEECH = {
+    "row": "row", "rows": "rows",
+    "table_intro": "Table, {size}. Columns: {columns}.",
+    "table_intro_wide": "Table, {size}, {count} columns, starting with {columns}.",
+    "table_intro_plain": "Table, {size}.",
+    "table_more": "And {count} more {rows}.",
+    "table_end": "End of table.",
+    "table_skipped": "Table with {size}, skipped.",
+    "yes": "yes", "no": "no", "warning": "warning", "not_applicable": "not applicable",
+    "milliseconds": "milliseconds", "about": "about", "plus_minus": "plus or minus", "to": "to", "change": "change",
+}
+SPEECH_WORDS = {
+    "en-us": _ENGLISH_SPEECH,
+    "en-gb": _ENGLISH_SPEECH,
+    "es": {
+        "row": "fila", "rows": "filas",
+        "table_intro": "Tabla, {size}. Columnas: {columns}.",
+        "table_intro_wide": "Tabla, {size}, {count} columnas, empezando por {columns}.",
+        "table_intro_plain": "Tabla, {size}.",
+        "table_more": "Y {count} {rows} más.",
+        "table_end": "Fin de la tabla.",
+        "table_skipped": "Tabla de {size}, omitida.",
+        "yes": "sí", "no": "no", "warning": "advertencia", "not_applicable": "no aplica",
+        "milliseconds": "milisegundos", "about": "aproximadamente", "plus_minus": "más o menos", "to": "a",
+        "change": "cambio",
+    },
+    "fr": {
+        "row": "ligne", "rows": "lignes",
+        "table_intro": "Tableau, {size}. Colonnes : {columns}.",
+        "table_intro_wide": "Tableau, {size}, {count} colonnes, à commencer par {columns}.",
+        "table_intro_plain": "Tableau, {size}.",
+        "table_more": "Et {count} autres {rows}.",
+        "table_end": "Fin du tableau.",
+        "table_skipped": "Tableau de {size}, ignoré.",
+        "yes": "oui", "no": "non", "warning": "attention", "not_applicable": "non applicable",
+        "milliseconds": "millisecondes", "about": "environ", "plus_minus": "plus ou moins", "to": "vers",
+        "change": "variation",
+    },
+    "it": {
+        "row": "riga", "rows": "righe",
+        "table_intro": "Tabella, {size}. Colonne: {columns}.",
+        "table_intro_wide": "Tabella, {size}, {count} colonne, a partire da {columns}.",
+        "table_intro_plain": "Tabella, {size}.",
+        "table_more": "E altre {count} {rows}.",
+        "table_end": "Fine della tabella.",
+        "table_skipped": "Tabella di {size}, omessa.",
+        "yes": "sì", "no": "no", "warning": "attenzione", "not_applicable": "non applicabile",
+        "milliseconds": "millisecondi", "about": "circa", "plus_minus": "più o meno", "to": "a", "change": "variazione",
+    },
+    "pt-br": {
+        "row": "linha", "rows": "linhas",
+        "table_intro": "Tabela, {size}. Colunas: {columns}.",
+        "table_intro_wide": "Tabela, {size}, {count} colunas, começando por {columns}.",
+        "table_intro_plain": "Tabela, {size}.",
+        "table_more": "E mais {count} {rows}.",
+        "table_end": "Fim da tabela.",
+        "table_skipped": "Tabela com {size}, omitida.",
+        "yes": "sim", "no": "não", "warning": "atenção", "not_applicable": "não se aplica",
+        "milliseconds": "milissegundos", "about": "cerca de", "plus_minus": "mais ou menos", "to": "para",
+        "change": "variação",
+    },
+    "hi": {
+        "row": "पंक्ति", "rows": "पंक्तियाँ",
+        "table_intro": "तालिका, {size}। कॉलम: {columns}।",
+        "table_intro_wide": "तालिका, {size}, {count} कॉलम, पहले {columns}।",
+        "table_intro_plain": "तालिका, {size}।",
+        "table_more": "और {count} {rows}।",
+        "table_end": "तालिका समाप्त।",
+        "table_skipped": "{size} की तालिका छोड़ी गई।",
+        "yes": "हाँ", "no": "नहीं", "warning": "चेतावनी", "not_applicable": "लागू नहीं",
+        "milliseconds": "मिलीसेकंड", "about": "लगभग", "plus_minus": "प्लस या माइनस", "to": "से", "change": "बदलाव",
+    },
+}
+
 # Recommended first choice per language (the best-rated voice of each in Kokoro's VOICES.md).
 DEFAULT_KOKORO_VOICE = {
     "a": "af_heart", "b": "bf_emma", "e": "ef_dora", "f": "ff_siwis", "i": "if_sara", "p": "pf_dora", "h": "hf_alpha",
@@ -124,7 +199,9 @@ KOKORO_VOICES: Dict[str, str] = {
 
 
 def language(code: Optional[str]) -> dict:
-    return LANGUAGES.get(code or "", LANGUAGES[DEFAULT_LANGUAGE])
+    """The language's settings and phrases, including how it speaks tables and symbols."""
+    code = code if code in LANGUAGES else DEFAULT_LANGUAGE
+    return {**SPEECH_WORDS[code], **LANGUAGES[code]}
 
 
 def language_code(code: Optional[str]) -> str:

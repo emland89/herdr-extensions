@@ -154,3 +154,56 @@ class MiniTargetTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ResponseListTest(unittest.TestCase):
+    def setUp(self):
+        isolate(self)
+
+    def make_panel(self, texts):
+        from herdr_speak import panel
+
+        with mock.patch("herdr_speak.herdr.panel_target", return_value=("w1:p1", "Pi in work")):
+            view = panel.Panel()
+        view.tab = 0
+        view.responses.texts, view.responses.loaded_at = list(texts), float("inf")  # loaded; no refresh
+        return view
+
+    def test_window_follows_what_plays_else_shows_the_newest(self):
+        from herdr_speak import panel
+
+        listing = panel.ResponseList()
+        listing.texts = [f"r{i}" for i in range(20)]
+        self.assertEqual(listing.window(None), range(12, 20))
+        self.assertEqual(listing.window(5), range(1, 9))
+        self.assertEqual(listing.window(0), range(0, 8))
+
+    def test_clicking_a_response_plays_it(self):
+        view = self.make_panel(["First.", "Second.", "Third."])
+        lines = view.response_lines({"language": "en-us"}, {"state": "idle"}, 90)
+        keys = [key for line in lines for _, _, key in line.hotspots]
+        self.assertEqual(sorted(set(keys)), ["resp:0", "resp:1", "resp:2"])
+        with mock.patch("herdr_speak.playlist.play") as play:
+            view.handle("resp:1")
+            wait_until(lambda: not view.controls.busy)
+        play.assert_called_once_with("w1:p1", 1)
+
+    def test_arrow_keys_choose_and_enter_plays(self):
+        view = self.make_panel(["First.", "Second.", "Third."])
+        with mock.patch("herdr_speak.client.playback", return_value={"state": "idle"}), \
+                mock.patch("herdr_speak.playlist.play") as play:
+            view.handle("up")  # the first press selects the newest
+            self.assertEqual(view.responses.selected, 2)
+            view.handle("up")
+            view.handle("enter")
+            wait_until(lambda: not view.controls.busy)
+        play.assert_called_once_with("w1:p1", 1)
+        self.assertIsNone(view.responses.selected)
+
+
+def wait_until(condition, timeout=5.0):
+    import time
+
+    deadline = time.time() + timeout
+    while not condition() and time.time() < deadline:
+        time.sleep(0.01)

@@ -27,9 +27,9 @@ flowchart LR
 | Module | Role |
 |---|---|
 | `commands.py` | Command-line entry points for the manifest's actions, event hook, panel, and setup |
-| `transcripts.py` | A pane's responses, one per turn, from pi, Claude Code, Codex, and opencode transcripts |
+| `transcripts.py` | A pane's responses, one per turn, and what a blocked agent is asking for, from pi, Claude Code, Codex, and opencode transcripts |
 | `playlist.py` | Play a pane's response by position; previous / next from what's playing or was last heard |
-| `text.py` | Markdown to speakable paragraphs (code, tables, links, long lines) |
+| `text.py` | Markdown to speakable paragraphs (code, tables read row by row, symbols, links), and the pieces that start speech fast |
 | `autoread.py` | Event hook: per-pane status memory, scope, de-duplication, queueing |
 | `client.py` | Starts the player on demand and sends it requests; `say` fallback without the runtime |
 | `panel.py` | Tabbed popup: player, auto-read, voice, shortcuts, setup; dropdowns and the shared playback controls |

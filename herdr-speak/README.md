@@ -7,7 +7,7 @@ Hear your coding agents. Speak is a [Herdr](https://herdr.dev) plugin that reads
 - **Player**: pause, resume, jump back or forward 5 seconds, and step through a pane's responses like a playlist (previous / next), from Herdr keys, a clickable panel, a mini player pane that stays open while you work, or the Mac's media keys and Control Center.
 - **Natural local voice**: [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M), 54 voices in 7 languages, offline after setup. macOS voices work too.
 - **Indicator** in Herdr's tab bar while speaking and when auto-read is on.
-- Code blocks, tables, links, and markdown are cleaned up so responses sound natural.
+- **Tables read properly**: the size and columns first, then each row with every value after its column header; big tables are summarized. Code blocks, links, markdown, and symbols such as ✅, →, and `ms` are turned into natural speech.
 
 ## Quick start
 
@@ -102,7 +102,7 @@ tab_bar_right = [
 
 | Tab | What's there |
 |---|---|
-| Player | What's playing with a progress bar, the playback controls, and quick voice, speed, and auto-read settings |
+| Player | What's playing with a progress bar, the playback controls, the pane's responses (click one to play it, or ↑ ↓ and Enter), and quick voice, speed, and auto-read settings |
 | Auto-read | Auto-read on or off, which panes to read (dropdown), and announcements |
 | Voice | Language (dropdown), every voice for it in a clickable list, speed, and model (dropdown) |
 | Shortcuts | Your Speak key bindings, read from Herdr's config, and the panel's own keys |
@@ -121,11 +121,12 @@ The letter keys work on every tab:
 | `a` | Auto-read new responses: on or off |
 | `f` | Auto-read from all agents, only panes you aren't viewing, or only the focused pane |
 | `m` | Say the agent and workspace before each response, such as "Claude in api" |
-| `b` | Say "… needs your input" when an agent waits for approval or an answer |
+| `b` | Say what an agent asks for when it waits for approval or an answer, such as "Claude in api wants to run npm" |
 | `l` | Language |
 | `v` | Voice: the language's Kokoro voices, then its installed macOS voices |
 | `s` | Speed, 0.8× to 1.5× |
 | `o` | Model: full (325 MB, best) or small (92 MB) |
+| `g` | How tables are read: auto, every row, size and columns only, or skip |
 | `p` | Mini player follows you between tabs |
 | `k` | Media keys and Control Center control Speak |
 | `i` | Install or repair the Kokoro voice |
@@ -189,6 +190,29 @@ Speak uses [Nerd Font](https://www.nerdfonts.com) icons (Material Design's media
 - **Auto-read** listens to Herdr's `pane.agent_status_changed` event and reads a response when its agent goes from working to idle or done. Viewing a finished pane doesn't read it again, and the same response is never read twice. Manual reads replace whatever is playing; auto-reads queue.
 - **Playback**: a small player process keeps the voice loaded, synthesizes one paragraph ahead of what you hear, and exits after 10 minutes without speech (`keep_alive_minutes`). Speak loads the voice ahead of time, when an agent starts a turn with auto-read on and when the panel or mini player opens, so speech starts in under a second. A read with nothing pre-loaded waits a few seconds once.
 
+## Tables
+
+Speak reads a table the way screen readers present one, linearized for listening ([research notes](docs/research/reading-tables.md)):
+
+```
+Table, 3 rows. Columns: File, Change, Tests.
+src/auth.py: Change: added token refresh; Tests: yes.
+src/db.py: Tests: no.
+README.md: Change: docs, and examples; Tests: warning.
+End of table.
+```
+
+Each row is its own paragraph, so there's a clear pause between rows. The first cell names the row (unless it's a number), every other value comes after its column header, and empty or "—" cells are left out. ✅ and ❌ are read as yes and no.
+
+Choose how in the panel (Voice tab → Reading → Tables, or `g`):
+
+| Mode | Reads |
+|---|---|
+| Auto (default) | Tables of up to 6 rows and 5 columns in full. Bigger ones: the announcement, the first 3 rows, and "And 7 more rows." Over 8 columns, the announcement only |
+| Every row | Every row of every table |
+| Size and columns only | The announcement |
+| Skip | "Table with 12 rows, skipped." |
+
 ## Languages and voices
 
 Kokoro voices exist for English (US and UK), Spanish, French, Italian, Brazilian Portuguese, and Hindi. Changing the language also switches the voice and the phrases Speak adds ("Code block skipped."). Japanese and Chinese Kokoro voices need extra language packages and aren't supported yet.
@@ -214,11 +238,12 @@ Settings live in `config.json` in the plugin's config directory (`herdr plugin c
   "keep_alive_minutes": 10,
   "icons": "auto",
   "mini_follow": false,
-  "media_keys": true
+  "media_keys": true,
+  "tables": "auto"
 }
 ```
 
-`engine` is `auto` (Kokoro once installed, macOS speech until then), `kokoro`, or `say`. `auto_panes` is `all`, `background`, or `focused`. `icons` is `auto`, `nerd`, or `plain`.
+`engine` is `auto` (Kokoro once installed, macOS speech until then), `kokoro`, or `say`. `auto_panes` is `all`, `background`, or `focused`. `icons` is `auto`, `nerd`, or `plain`. `tables` is `auto`, `rows`, `summary`, or `skip` (see [Tables](#tables)).
 
 ## Privacy
 

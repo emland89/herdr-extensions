@@ -93,6 +93,19 @@ class HandleEventTest(unittest.TestCase):
         self.send(config, "working", "done")  # no new answer this time
         self.assertEqual([c[0][0] for c in self.speak.call_args_list], ["First.", "Second."])
 
+    def test_blocked_agent_says_what_it_asks_for(self):
+        config = {"auto_read": True, "announce_blocked": True, "auto_panes": "all", "language": "en-us"}
+        with mock.patch("herdr_speak.autoread.pending_request", return_value="wants to run git"):
+            self.send(config, "working", "blocked")
+        self.assertEqual(self.speak.call_args[0][0], "Pi in work wants to run git.")
+
+    def test_blocked_without_a_pending_call_or_in_another_language_stays_generic(self):
+        with mock.patch("herdr_speak.autoread.pending_request", return_value=None):
+            self.assertEqual(autoread.blocked_announcement(self.agent, "Pi in work", "en-us"), "Pi in work needs your input.")
+        with mock.patch("herdr_speak.autoread.pending_request", return_value="wants to run git") as pending:
+            self.assertNotIn("git", autoread.blocked_announcement(self.agent, "Pi in work", "es"))
+        pending.assert_not_called()
+
     def test_not_marked_spoken_when_the_player_fails(self):
         config = {"auto_read": True, "announce": False}
         self.speak.side_effect = RuntimeError("player down")

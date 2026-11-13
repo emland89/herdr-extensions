@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 from pathlib import Path
 from typing import List, Optional
@@ -273,6 +274,186 @@ def responses(agent: dict) -> List[str]:
     if kind in SUPPORTED_AGENTS:
         raise RuntimeError(f"Herdr hasn't reported a session for {SUPPORTED_AGENTS[kind]} in this pane yet")
     raise RuntimeError(f"Reading responses from {kind or 'this pane'} isn't supported")
+
+
+# ---------------------------------------------------------------- what a blocked agent is asking
+
+SHELL_TOOLS = {"bash", "shell", "exec_command", "execute", "exec", "local_shell"}
+EDIT_TOOLS = {"edit", "multiedit", "write", "patch", "apply_patch", "notebookedit"}
+QUESTION_TOOLS = {"askuserquestion", "question", "ask_user", "request_user_input"}
+
+
+def _arguments(value) -> dict:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return {"input": value}
+    return value if isinstance(value, dict) else {}
+
+
+def _claude_pending(path: Path) -> Optional[tuple]:
+    pending: dict = {}
+    for entry in _jsonl(path):
+        message = entry.get("message")
+        if entry.get("isSidechain") or not isinstance(message, dict) or not isinstance(message.get("content"), list):
+            continue
+        for block in message["content"]:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "tool_use":
+                pending[block.get("id")] = (block.get("name"), block.get("input"))
+            elif block.get("type") == "tool_result":
+                pending.pop(block.get("tool_use_id"), None)
+    return list(pending.values())[-1] if pending else None
+
+
+def _pi_pending(path: Path) -> Optional[tuple]:
+    pending: dict = {}
+    for entry in _jsonl(path):
+        message = entry.get("message")
+        if entry.get("type") != "message" or not isinstance(message, dict):
+            continue
+        if message.get("role") == "toolResult":
+            pending.pop(message.get("toolCallId"), None)
+        elif message.get("role") == "assistant" and isinstance(message.get("content"), list):
+            for block in message["content"]:
+                if isinstance(block, dict) and block.get("type") == "toolCall":
+                    pending[block.get("id")] = (block.get("name"), block.get("arguments"))
+    return list(pending.values())[-1] if pending else None
+
+
+def _codex_pending(path: Path) -> Optional[tuple]:
+    pending: dict = {}
+    for entry in _jsonl(path):
+        payload = entry.get("payload")
+        if entry.get("type") != "response_item" or not isinstance(payload, dict):
+            continue
+        kind = payload.get("type")
+        if kind in ("function_call", "custom_tool_call", "local_shell_call"):
+            pending[payload.get("call_id")] = (payload.get("name") or "shell", payload.get("arguments") or payload.get("input"))
+        elif kind in ("function_call_output", "custom_tool_call_output", "local_shell_call_output"):
+            pending.pop(payload.get("call_id"), None)
+    return list(pending.values())[-1] if pending else None
+
+
+def _opencode_pending(session_id: str, home: Path = HOME) -> Optional[tuple]:
+    """A tool whose state isn't finished: opencode updates the row in place when it completes."""
+    def unfinished(block) -> Optional[tuple]:
+        state = block.get("state") if isinstance(block, dict) else None
+        if isinstance(state, dict) and block.get("type") == "tool" and state.get("status") not in ("completed", "error"):
+            return block.get("name") or block.get("tool"), state.get("input")
+        return None
+
+    queries = [("SELECT data FROM session_message WHERE session_id = ? AND type = 'assistant' ORDER BY seq DESC LIMIT 3",
+                lambda message: message.get("content")),
+               ("SELECT data FROM part WHERE session_id = ? ORDER BY time_created DESC, id DESC LIMIT 20",
+                lambda part: [part])]
+    for path in opencode_databases(home):
+        try:
+            db = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, timeout=2)
+        except sqlite3.Error:
+            continue
+        try:
+            for query, blocks in queries:
+                try:
+                    rows = db.execute(query, (session_id,)).fetchall()
+                except sqlite3.OperationalError:
+                    continue
+                for (data,) in rows:
+                    record = _json(data)
+                    for block in reversed((blocks(record) or []) if record else []):
+                        found = unfinished(block)
+                        if found:
+                            return found
+        except sqlite3.Error:
+            continue
+        finally:
+            db.close()
+    return None
+
+
+def _basename(value) -> str:
+    return Path(str(value)).name if value else "a file"
+
+
+def _program(command) -> str:
+    """The program a shell command runs: 'npm' for 'cd app && FOO=1 npm test'; '' when unclear."""
+    command = " ".join(command) if isinstance(command, list) else str(command)
+    embedded = re.search(r"\bcmd\s*:\s*[\"'`]([^\"'`]+)", command)  # Codex code mode: exec_command({cmd: "…"})
+    if embedded:
+        command = embedded.group(1)
+    for segment in re.split(r"&&|\|\||[;|\n]", command):
+        words = [w for w in segment.split() if not re.fullmatch(r"\w+=\S*", w)]
+        while words and words[0] in ("sudo", "env", "time", "nohup", "exec"):
+            words = words[1:]
+        if not words or words[0] in ("cd", "export", "set", "source", "."):
+            continue
+        program = Path(words[0]).name
+        return program if re.fullmatch(r"[A-Za-z][\w.+-]{0,29}", program) else ""
+    return ""
+
+
+def describe_request(name, arguments) -> str:
+    """'wants to run git', 'asks: …': what a pending tool call asks the user to approve or answer."""
+    tool = str(name or "").lower()
+    args = _arguments(arguments)
+    if tool in QUESTION_TOOLS:
+        questions = args.get("questions") if isinstance(args.get("questions"), list) else [args]
+        spoken = []
+        for question in questions[:3]:
+            if not isinstance(question, dict):
+                continue
+            text = str(question.get("question") or question.get("prompt") or "").strip()
+            options = [str(o.get("label") if isinstance(o, dict) else o) for o in question.get("options") or []][:6]
+            if text:
+                spoken.append(text + (f" Options: {', '.join(options)}." if options else ""))
+        return "asks: " + " ".join(spoken) if spoken else "has a question for you"
+    if tool == "exitplanmode":
+        return "has a plan ready for you to review"
+    if tool in SHELL_TOOLS:
+        description = args.get("description") or args.get("justification")
+        if isinstance(description, str) and description.strip():
+            text = description.strip()
+            if len(text) > 1 and text[1].islower():  # "Push the branch" -> "push the branch"; keep "API …"
+                text = text[0].lower() + text[1:]
+            return f"wants to run a command: {text}"
+        source = args.get("command") or args.get("cmd") or args.get("input") or ""
+        if tool == "exec" and not re.search(r"\bcmd\s*:", str(source)):
+            return "wants to run code"  # Codex code mode: JavaScript, not a shell command
+        program = _program(source)
+        return f"wants to run {program}" if program else "wants to run a command"
+    path = args.get("file_path") or args.get("path") or args.get("filePath") or args.get("notebook_path")
+    if tool in EDIT_TOOLS:
+        return f"wants to {'write' if tool == 'write' else 'edit'} {_basename(path)}"
+    if tool == "read":
+        return f"wants to read {_basename(path)}"
+    if tool in ("webfetch", "web_fetch", "fetch") and args.get("url"):
+        host = re.sub(r"^\w+://", "", str(args["url"])).split("/")[0]
+        return f"wants to fetch from {host}"
+    readable = re.sub(r"[_-]+", " ", re.sub(r"^mcp__", "", str(name or "a tool"))).strip()
+    return f"wants to use {readable}"
+
+
+def pending_request(agent: dict) -> Optional[str]:
+    """What a blocked agent is asking for, from its newest tool call that has no result yet."""
+    kind = agent.get("agent")
+    value = (agent.get("agent_session") or {}).get("value")
+    call = None
+    try:
+        if kind == "claude" and value:
+            path = claude_transcript(value)
+            call = _claude_pending(path) if path else None
+        elif kind == "pi" and value:
+            call = _pi_pending(Path(value))
+        elif kind == "codex":
+            path = codex_transcript(value, agent.get("foreground_cwd") or agent.get("cwd"))
+            call = _codex_pending(path) if path else None
+        elif kind == "opencode" and value:
+            call = _opencode_pending(value)
+    except OSError:
+        return None
+    return describe_request(*call) if call else None
 
 
 def last_response(agent: dict) -> Optional[str]:

@@ -53,7 +53,7 @@ def play(pane: str, index: int = -1, config: Optional[dict] = None, agent: Optio
     if not 0 <= position < len(items):
         raise NoTrack("No response to read yet" if not items else "No response there")
     language = config.get("language") or catalog.DEFAULT_LANGUAGE
-    text = clean_for_speech(items[position], language)
+    text = clean_for_speech(items[position], language, config.get("tables", "auto"))
     if not text:
         raise NoTrack("That response has nothing to read aloud")
     track = {"pane": pane, "index": position, "count": len(items)}

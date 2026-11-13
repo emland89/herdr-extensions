@@ -16,7 +16,7 @@ from typing import Optional, Tuple
 
 from . import catalog, client, herdr, paths, playlist
 from .text import clean_for_speech
-from .transcripts import SUPPORTED_AGENTS, last_response
+from .transcripts import SUPPORTED_AGENTS, last_response, pending_request
 
 
 def parse_status_event(raw: str) -> Tuple[Optional[str], Optional[str]]:
@@ -76,6 +76,31 @@ def current_digest(agent: dict, language: Optional[str]) -> Optional[str]:
         return None
 
 
+REQUEST_CHARS = 400  # a long question is cut here; the screen has the rest
+
+
+def blocked_announcement(agent: dict, title: str, language: Optional[str]) -> str:
+    """'Claude in api wants to run git.': what the agent asks for, else '… needs your input'.
+
+    The descriptions are English, so other languages keep the generic phrase. The tool
+    call can reach the transcript a moment after the status change, so look a few times.
+    """
+    language = language or catalog.DEFAULT_LANGUAGE
+    generic = f"{title} {catalog.language(language)['needs_input']}"
+    if not language.startswith("en"):
+        return generic
+    for attempt in range(3):
+        request = pending_request(agent)
+        if request:
+            spoken = clean_for_speech(request, language)
+            if len(spoken) > REQUEST_CHARS:
+                spoken = spoken[:REQUEST_CHARS].rsplit(" ", 1)[0] + "…"
+            return f"{title} {spoken}" if spoken else generic
+        if attempt < 2:
+            time.sleep(0.3)
+    return generic
+
+
 def handle_event(config: dict, raw_event: str) -> None:
     if not config.get("auto_read"):
         return
@@ -104,7 +129,7 @@ def handle_event(config: dict, raw_event: str) -> None:
         return
     title = herdr.pane_title(pane, agent, language)
     if blocked:
-        client.speak(f"{title} {catalog.language(language)['needs_input']}", title, config, queue=True, source="auto")
+        client.speak(blocked_announcement(agent, title, language), title, config, queue=True, source="auto")
         return
 
     # The transcript can trail the status change; wait for a response that is neither

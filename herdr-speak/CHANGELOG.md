@@ -2,6 +2,22 @@
 
 All notable changes to Speak. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-11-13
+
+### Added
+
+- Tables are read aloud instead of skipped: the size and columns first, then each row with every value after its column header ("auth.py: Tests: yes."), as screen readers and the HTML spec's speech example present them. Big tables are summarized. A Tables setting (Voice tab, `g`) chooses auto, every row, size and columns only, or skip. Tables without leading pipes are now recognized. Research notes: `docs/research/reading-tables.md`.
+- The panel's Player tab lists the pane's responses: click one, or use ↑ ↓ and Enter, to play it.
+- A blocked agent says what it asks for: "Claude in api wants to run npm", "… asks: Which layout? Options: Grid, List.", "… wants to edit config.py" (English; other languages keep "needs your input").
+
+### Changed
+
+- Speech starts sooner: the first words are synthesized on their own, and a new response cancels synthesis still running for the one it replaces. Switching responses went from about 3 s to well under 2 s on a busy machine.
+
+### Fixed
+
+- ✅ ❌ ✓ ✗ ⚠️ → ± ~ Δ, "N/A", and "ms" were silently dropped (the voice can't pronounce them); they are now spoken as words, in every language.
+
 ## [0.4.0] - 2026-11-13
 
 ### Added

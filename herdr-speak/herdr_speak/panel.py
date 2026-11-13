@@ -9,10 +9,13 @@ so it works before any setup.
 from __future__ import annotations
 
 import threading
+import time
 from typing import Callable, List, Optional, Tuple
 
 from . import __version__, catalog, client, herdr, icons, paths, playlist, runtime, shortcuts, status
 from . import config as settings
+from .text import TABLE_MODE_LABELS, TABLE_MODES, clean_for_speech, plain_label
+from .transcripts import responses
 from .ui import BOLD, CYAN, DIM, GREEN, RED, REVERSE, YELLOW, Line, Screen, button, progress_bar
 
 SEEK_SECONDS = 5
@@ -38,7 +41,8 @@ HINT_COLUMN = 64  # key hints after checkboxes line up here
 PANEL_KEYS = [
     ("1-5, Tab", "Switch tab"), ("space", "Pause / resume, or play the pane"), ("← →", "Back / forward 5 seconds"),
     ("r  n  x", "Previous / next response / stop"), ("t", "Test the voice"), ("a f m b", "Auto-read settings"),
-    ("l v s o", "Language, voice, speed, model"), ("p", "Mini player follows you between tabs"), ("k", "Media keys"),
+    ("l v s o", "Language, voice, speed, model"), ("g", "How tables are read"),
+    ("p", "Mini player follows you between tabs"), ("k", "Media keys"),
     ("↑ ↓ Enter", "Choose in an open dropdown"),
     ("i", "Install or repair the voice"), ("q, Esc", "Close (Esc closes a dropdown first)"),
 ]
@@ -67,6 +71,8 @@ def dropdown_options(name: str) -> List[Tuple[str, str]]:
         return [("full", "Full (325 MB, best)"), ("small", "Small (92 MB)")]
     if name == "icons":
         return [(style, icons.STYLE_LABELS[style]) for style in icons.STYLES]
+    if name == "tables":
+        return [(mode, TABLE_MODE_LABELS[mode]) for mode in TABLE_MODES]
     return []
 
 
@@ -135,6 +141,61 @@ class Controls:
     def status_line(self) -> Line:
         text = f"{self.busy}…" if self.busy else self.message
         return Line().add(f"  {text}", DIM if self.busy else "")
+
+
+# ---------------------------------------------------------------- the pane's responses
+
+RESPONSE_ROWS = 8  # responses listed at once on the Player tab
+REFRESH_SECONDS = 2.0
+
+
+class ResponseList:
+    """The target pane's responses for the Player tab, loaded off the drawing loop."""
+
+    def __init__(self):
+        self.texts: List[str] = []
+        self.previews: dict = {}
+        self.error = ""
+        self.loaded_at = 0.0
+        self.loading = False
+        self.selected: Optional[int] = None  # keyboard choice; None follows what's playing
+
+    def refresh(self, pane: Optional[str]) -> None:
+        if not pane or self.loading or time.time() - self.loaded_at < REFRESH_SECONDS:
+            return
+        self.loading = True
+
+        def load() -> None:
+            try:
+                texts = responses(herdr.agent_info(pane))
+                if texts != self.texts:
+                    self.texts, self.previews = texts, {}
+                self.error = ""
+            except Exception as error:  # shown in place of the list
+                self.error = str(error)
+            finally:
+                self.loaded_at, self.loading = time.time(), False
+
+        threading.Thread(target=load, daemon=True).start()
+
+    def preview(self, index: int, language: str) -> str:
+        """The response's first line, as it will be spoken."""
+        if index not in self.previews:
+            spoken = clean_for_speech(self.texts[index][:600], language)
+            self.previews[index] = plain_label(spoken.split("\n\n")[0] if spoken else "(nothing to read)")
+        return self.previews[index]
+
+    def window(self, playing: Optional[int]) -> range:
+        """RESPONSE_ROWS rows around the keyboard choice or what's playing, else the newest."""
+        count = len(self.texts)
+        focus = self.selected if self.selected is not None else (playing if playing is not None else count - 1)
+        start = max(0, min(focus - RESPONSE_ROWS // 2, count - RESPONSE_ROWS))
+        return range(start, min(count, start + RESPONSE_ROWS))
+
+    def move(self, step: int, playing: Optional[int]) -> None:
+        if self.texts:
+            current = self.selected if self.selected is not None else (playing if playing is not None else len(self.texts))
+            self.selected = max(0, min(len(self.texts) - 1, current + step))
 
 
 # ---------------------------------------------------------------- shared widgets
@@ -219,6 +280,7 @@ class Panel:
     def __init__(self):
         self.controls = Controls()
         self.controls.target, self.controls.target_title = herdr.panel_target()
+        self.responses = ResponseList()
         self.tab = self.load_tab()
         self.dropdown: Optional[str] = None  # the open dropdown's setting name
         self.highlight = 0  # keyboard position inside the open dropdown
@@ -289,8 +351,8 @@ class Panel:
     def player_tab(self, config: dict, playback: dict, width: int) -> List[Line]:
         lines = [heading("Now playing", width)]
         lines += player_lines(playback, width, ready=self.controls.target_title)
-        lines += [transport(playback.get("state", "idle"), ready=bool(self.controls.target)), Line(),
-                  heading("Quick settings", width)]
+        lines += [transport(playback.get("state", "idle"), ready=bool(self.controls.target)), Line()]
+        lines += self.response_lines(config, playback, width) + [Line(), heading("Quick settings", width)]
         voice = field("Voice", "tab:2").add(settings.voice_label(config), BOLD, "tab:2").add("   ")
         button(voice, f"{ic('settings')} Change", "tab:2")
         button(voice, f"{ic('play')} Test", "t")
@@ -304,6 +366,35 @@ class Panel:
         mini.add(f"{ic('on') if follow_on else ic('off')} follows you between tabs", GREEN if follow_on else DIM, "p")
         mini.add(" " * max(2, HINT_COLUMN - mini.width) + "p", DIM)
         return lines + [voice, speed, auto, mini]
+
+    def response_lines(self, config: dict, playback: dict, width: int) -> List[Line]:
+        """The pane's responses: click one, or ↑ ↓ and Enter, to play it."""
+        target = self.controls.target
+        if not target:
+            return [heading("Responses", width), Line().add("  Open the panel from an agent pane to list its responses", DIM)]
+        listing = self.responses
+        listing.refresh(target)
+        lines = [heading(f"Responses · {self.controls.target_title}", width)]
+        if listing.error and not listing.texts:
+            return lines + [Line().add(f"  {listing.error}", DIM)]
+        if not listing.texts:
+            return lines + [Line().add("  Loading…" if listing.loading or not listing.loaded_at else "  No responses yet", DIM)]
+        track = playback.get("track") if playback.get("state", "idle") != "idle" else None
+        playing = track["index"] if track and track.get("pane") == target else None
+        rows = listing.window(playing)
+        if rows.start:
+            lines.append(Line().add(f"      ↑ {rows.start} earlier", DIM))
+        for index in rows:
+            mark = f"{ic('play')} " if index == playing else "  "
+            number = f"{index + 1:>3}  "
+            text = listing.preview(index, config.get("language") or catalog.DEFAULT_LANGUAGE)
+            text = text[: max(10, width - 14)]
+            style = REVERSE if index == listing.selected else (GREEN + BOLD if index == playing else "")
+            lines.append(Line().add("  ").add(mark, GREEN).add(number, DIM, f"resp:{index}").add(text, style, f"resp:{index}"))
+        if rows.stop < len(listing.texts):
+            lines.append(Line().add(f"      ↓ {len(listing.texts) - rows.stop} newer", DIM))
+        lines.append(Line().add("  Click a response to play it, or ↑ ↓ and Enter", DIM))
+        return lines
 
     def auto_tab(self, config: dict, playback: dict, width: int) -> List[Line]:
         lines = [heading("Auto-read", width),
@@ -338,6 +429,9 @@ class Panel:
         speed = stepper(field("Speed"), f"{float(config.get('speed') or 1.0):.1f}x", "speed:-", "speed:+", "s")
         lines.append(speed.add(" " * max(2, HINT_COLUMN - speed.width) + "s", DIM))
         lines += self.dropdown_field("model", "Model", config, "o")
+        lines += [Line(), heading("Reading", width)]
+        lines += self.dropdown_field("tables", "Tables", config, "g")
+        lines.append(Line().add("  Rows are read with each value after its column: \"auth.py: Tests: yes.\"", DIM))
         return lines
 
     @staticmethod
@@ -440,6 +534,8 @@ class Panel:
             current = str(settings.load().get(name))
             self.highlight = next((i for i, (value, _) in enumerate(dropdown_options(name)) if value == current), 0)
             return True
+        if self.response_key(key):
+            return True
         if self.controls.playback_key(key):
             return True
         self.controls.message = ""
@@ -485,6 +581,28 @@ class Panel:
         if (key == "o" or key.startswith("pick:model:")) and runtime.runtime_ready() \
                 and not runtime.model_path(config).exists():
             runtime.start_background_setup()
+        return True
+
+    def response_key(self, key: str) -> bool:
+        """Click a response, or choose one with ↑ ↓ and play it with Enter (Player tab)."""
+        target = self.controls.target
+        if key.startswith("resp:") and target:
+            index = int(key[5:])
+            self.responses.selected = None
+            self.controls.in_background("Loading", lambda: playlist.play(target, index))
+            return True
+        if self.tab != 0 or not target or key not in ("up", "down", "enter"):
+            return False
+        playback = client.playback()
+        track = playback.get("track") if playback.get("state", "idle") != "idle" else None
+        playing = track["index"] if track and track.get("pane") == target else None
+        if key == "enter":
+            if self.responses.selected is None:
+                return False
+            index, self.responses.selected = self.responses.selected, None
+            self.controls.in_background("Loading", lambda: playlist.play(target, index))
+        else:
+            self.responses.move(1 if key == "down" else -1, playing)
         return True
 
     def dropdown_key(self, key: str) -> bool:
@@ -536,6 +654,8 @@ class Panel:
                 config["speed"] = speeds[max(0, min(len(speeds) - 1, index + (1 if key == "speed:+" else -1)))]
         elif key == "o":
             config["model"] = "small" if config.get("model") != "small" else "full"
+        elif key == "g":
+            config["tables"] = cycle(TABLE_MODES, config.get("tables"), step)
         elif key.startswith("pick:"):
             _, name, value = key.split(":", 2)
             if value not in [option for option, _ in dropdown_options(name)]:

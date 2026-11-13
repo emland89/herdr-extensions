@@ -111,6 +111,48 @@ class TranscriptTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, mock.patch.dict("os.environ", {"XDG_DATA_HOME": ""}):
             self.assertIsNone(transcripts.last_opencode_message("s1", Path(directory)))
 
+    def test_pending_request_is_the_newest_call_without_a_result(self):
+        claude = write_jsonl(self, [
+            {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "a", "name": "Read", "input": {}}]}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "a"}]}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": "b", "name": "Bash", "input": {"command": "git push", "description": "Push it"}}]}},
+        ])
+        self.assertEqual(transcripts._claude_pending(claude), ("Bash", {"command": "git push", "description": "Push it"}))
+        pi = write_jsonl(self, [
+            {"type": "message", "message": {"role": "assistant", "content": [
+                {"type": "toolCall", "id": "1", "name": "bash", "arguments": {"command": "rm -rf build"}}]}},
+        ])
+        self.assertEqual(transcripts._pi_pending(pi), ("bash", {"command": "rm -rf build"}))
+        codex = write_jsonl(self, [
+            {"type": "response_item", "payload": {"type": "function_call", "call_id": "x", "name": "shell", "arguments": "{}"}},
+            {"type": "response_item", "payload": {"type": "function_call_output", "call_id": "x"}},
+        ])
+        self.assertIsNone(transcripts._codex_pending(codex))
+
+    def test_opencode_pending_tool_is_one_that_has_not_finished(self):
+        def row(seq, status):
+            content = [{"type": "tool", "name": "shell", "state": {"status": status, "input": {"command": "make"}}}]
+            return ("session_message", (f"m{seq}", "s1", "assistant", seq, json.dumps({"content": content})))
+
+        home = self.opencode_db("CREATE TABLE session_message (id, session_id, type, seq, data);",
+                                [row(1, "completed"), row(2, "pending")])
+        with mock.patch.dict("os.environ", {"XDG_DATA_HOME": ""}):
+            self.assertEqual(transcripts._opencode_pending("s1", home), ("shell", {"command": "make"}))
+
+    def test_requests_are_described_in_plain_words(self):
+        describe = transcripts.describe_request
+        self.assertEqual(describe("Bash", {"command": "git push", "description": "Push the branch"}),
+                         "wants to run a command: push the branch")
+        self.assertEqual(describe("Bash", {"command": "cd app && FOO=1 npm test"}), "wants to run npm")
+        self.assertEqual(describe("exec", "const x = 1"), "wants to run code")
+        self.assertEqual(describe("Edit", {"file_path": "/x/src/config.py"}), "wants to edit config.py")
+        self.assertEqual(describe("WebFetch", {"url": "https://docs.github.com/en"}), "wants to fetch from docs.github.com")
+        self.assertEqual(describe("AskUserQuestion", {"questions": [{"question": "Which one?", "options": [
+            {"label": "A"}, {"label": "B"}]}]}), "asks: Which one? Options: A, B.")
+        self.assertEqual(describe("ExitPlanMode", {}), "has a plan ready for you to review")
+        self.assertEqual(describe("mcp__gitea__issue_write", {}), "wants to use gitea issue write")
+
     def test_unsupported_and_unreported_agents_explain_why(self):
         with self.assertRaisesRegex(RuntimeError, "isn't supported"):
             transcripts.last_response({"agent": "aider"})

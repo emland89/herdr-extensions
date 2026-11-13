@@ -29,11 +29,12 @@ import numpy as np
 
 from . import catalog, paths, status
 from . import config as settings
-from .text import defuse_say, paragraphs, plain_label
+from .text import defuse_say, plain_label, speech_pieces
 
 SAMPLE_RATE = catalog.SAMPLE_RATE
 MAX_PHONEMES = 510  # Kokoro's context, minus the two padding tokens
 PARAGRAPH_PAUSE = np.zeros(int(SAMPLE_RATE * 0.25), dtype=np.float32)
+PIECE_PAUSE = np.zeros(int(SAMPLE_RATE * 0.05), dtype=np.float32)  # between pieces of one paragraph
 CHARS_PER_SECOND = 14.0  # typical speech at speed 1.0, until the first paragraph gives the real rate
 LOOKAHEAD = 2  # items synthesized ahead of playback
 
@@ -61,6 +62,12 @@ class KokoroEngine:
         self.session = onnxruntime.InferenceSession(str(model), providers=["CPUExecutionProvider"])
         self.g2p: Dict[str, Callable] = {}
         self.voices: Dict[str, np.ndarray] = {}
+        self.run_options = onnxruntime.RunOptions()
+        self._run_options_class = onnxruntime.RunOptions
+
+    def cancel(self) -> None:
+        """Abort the synthesis in progress (called from another thread); it raises in synthesize()."""
+        self.run_options.terminate = True
 
     @staticmethod
     def _prepare_espeak() -> None:
@@ -119,6 +126,7 @@ class KokoroEngine:
 
     def synthesize(self, text: str, language: str, voice: str, speed: float) -> np.ndarray:
         style = self._voice(voice)
+        self.run_options = self._run_options_class()  # fresh per call, so an old cancel doesn't stick
         audio = []
         for phonemes in self.phoneme_chunks(text, language):
             tokens = [self.vocab[p] for p in phonemes if p in self.vocab]
@@ -128,7 +136,7 @@ class KokoroEngine:
                 "input_ids": np.array([[0, *tokens, 0]], dtype=np.int64),
                 "style": style[min(len(tokens), len(style) - 1)][None, :],
                 "speed": np.array([speed], dtype=np.float32),
-            })[0]
+            }, self.run_options)[0]
             audio.append(np.asarray(output, dtype=np.float32).reshape(-1))
         return np.concatenate(audio) if audio else np.zeros(0, dtype=np.float32)
 
@@ -167,16 +175,18 @@ def clean_track(track) -> Optional[dict]:
 
 
 class Item:
-    def __init__(self, title: str, texts: List[str], speech: dict, source: str, track: Optional[dict] = None):
+    def __init__(self, title: str, texts: List[str], speech: dict, source: str, track: Optional[dict] = None,
+                 paragraph_ends: Optional[List[bool]] = None):
         self.title = plain_label(title)
+        self.paragraph_ends = paragraph_ends or [True] * len(texts)  # False: a piece split for a fast start
         self.track = clean_track(track)  # where the text came from, for previous / next response
         self.texts = texts
         self.speech = speech
         self.source = source
         self.chunks: List[np.ndarray] = []  # appended, never copied: the audio callback reads across them
         self.length = 0  # samples in all chunks
-        self.synthesized = 0  # paragraphs done
-        self.done = not texts  # all paragraphs synthesized (or failed)
+        self.synthesized = 0  # pieces done
+        self.done = not texts  # all pieces synthesized (or failed)
         self.error: Optional[str] = None
         self.total_chars = sum(len(text) for text in texts)
         self.chars_done = 0
@@ -226,19 +236,28 @@ class Speaker:
         self.wake = threading.Event()
         self.last_activity = time.time()
         self.errors: List[str] = []
+        self.working: Optional[tuple] = None  # (item, engine) being synthesized right now
         threading.Thread(target=self._synthesis_loop, daemon=True).start()
+
+    def _cancel_dropped(self) -> None:
+        """Stop synthesizing an item that's no longer queued, so the next one starts at once."""
+        working = self.working
+        if working and working[0] not in self.items and hasattr(working[1], "cancel"):
+            working[1].cancel()
 
     # -- commands
 
     def speak(self, text: str, title: str, speech: dict, queue: bool, source: str = "manual",
               track: Optional[dict] = None) -> None:
-        item = Item(title, paragraphs(text), speech, source, track)
+        pieces = speech_pieces(text)
+        item = Item(title, [piece for piece, _ in pieces], speech, source, track, [end for _, end in pieces])
         with self.lock:
             if not queue:
                 self.items.clear()
                 self.position = 0
                 self.paused = False
             self.items.append(item)
+            self._cancel_dropped()
             self.last_activity = time.time()
         self.wake.set()
 
@@ -247,6 +266,7 @@ class Speaker:
             self.items.clear()
             self.position = 0
             self.paused = False
+            self._cancel_dropped()
 
     def set_paused(self, paused: Optional[bool] = None) -> None:
         with self.lock:
@@ -269,6 +289,7 @@ class Speaker:
                 self.items.pop(0)
                 self.position = 0
                 self.paused = False
+                self._cancel_dropped()
 
     def snapshot(self) -> dict:
         with self.lock:
@@ -325,9 +346,17 @@ class Speaker:
                 continue
             speech = item.speech
             try:
-                audio = self.engine(speech).synthesize(item.texts[item.synthesized], speech.get("language"),
-                                                       speech.get("voice"), float(speech.get("speed") or 1.0))
+                engine = self.engine(speech)
+                with self.lock:
+                    self.working = (item, engine)
+                audio = engine.synthesize(item.texts[item.synthesized], speech.get("language"),
+                                          speech.get("voice"), float(speech.get("speed") or 1.0))
             except Exception as error:  # keep the player alive; report and drop this item
+                with self.lock:
+                    self.working = None
+                    dropped = item not in self.items
+                if dropped:
+                    continue  # cancelled because it was replaced, stopped, or skipped: not an error
                 item.error = str(error)
                 log(f"synthesis failed: {error!r}")
                 with self.lock:
@@ -335,7 +364,9 @@ class Speaker:
                     self.errors.append(item.error)
                 continue
             with self.lock:
-                item.append(np.concatenate([audio, PARAGRAPH_PAUSE]))
+                self.working = None
+                pause = PARAGRAPH_PAUSE if item.paragraph_ends[item.synthesized] else PIECE_PAUSE
+                item.append(np.concatenate([audio, pause]))
                 item.chars_done += len(item.texts[item.synthesized])
                 item.synthesized += 1
                 item.done = item.synthesized >= len(item.texts)

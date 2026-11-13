@@ -33,8 +33,16 @@ class FakeEngine:
     def synthesize(self, text, language, voice, speed):
         if self.fail_on and self.fail_on in text:
             raise RuntimeError("engine exploded")
-        time.sleep(self.slow)
+        self.cancelled = False
+        deadline = time.time() + self.slow
+        while time.time() < deadline:
+            if self.cancelled:
+                raise RuntimeError("cancelled")
+            time.sleep(0.005)
         return np.full(RATE, 0.5, dtype=np.float32)
+
+    def cancel(self):
+        self.cancelled = True
 
 
 def wait_for(predicate, timeout=5.0):
@@ -91,6 +99,18 @@ class SpeakerTest(unittest.TestCase):
         self.assertEqual(speaker.snapshot()["position"], 0)
         speaker.seek(5)
         self.assertAlmostEqual(speaker.snapshot()["position"], 1.25, places=2)
+
+    def test_a_replaced_response_stops_synthesizing_at_once(self):
+        speaker = self.make(slow=3.0)
+        speaker.speak("old", "A", self.speech, queue=False)
+        wait_for(lambda: speaker.working is not None)
+        started = time.time()
+        speaker.speak("new", "B", self.speech, queue=False)
+        speaker.engines["say"].slow = 0.0
+        self.assertTrue(wait_for(lambda: speaker.items and speaker.items[0].length > 0, timeout=2.0))
+        self.assertLess(time.time() - started, 1.0)  # didn't wait out the old 3 s synthesis
+        self.assertEqual(speaker.snapshot()["title"], "B")
+        self.assertEqual(speaker.errors, [])  # a cancel isn't an error
 
     def test_queue_skip_and_replace(self):
         speaker = self.make()

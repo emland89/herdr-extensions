@@ -26,7 +26,7 @@ def read(mode: str) -> int:
             herdr.notify(str(error))
             return 1
         return 0
-    text = clean_for_speech(herdr.selected_text() or "", config["language"])
+    text = clean_for_speech(herdr.selected_text() or "", config["language"], config.get("tables", "auto"))
     if not text:
         herdr.notify("Nothing selected")
         return 1

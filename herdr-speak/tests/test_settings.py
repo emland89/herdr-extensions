@@ -44,6 +44,10 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual((config["model"], config["speed"], config["auto_read"], config["auto_panes"]),
                          ("full", 1.0, False, "all"))
 
+    def test_table_mode_defaults_to_auto(self):
+        self.assertEqual(settings.sanitize({"tables": "rows"})["tables"], "rows")
+        self.assertEqual(settings.sanitize({"tables": "everything"})["tables"], "auto")
+
     def test_unknown_language_falls_back_to_default(self):
         paths.CONFIG_DIR.mkdir(parents=True)
         paths.CONFIG_FILE.write_text('{"language": "xx"}')
