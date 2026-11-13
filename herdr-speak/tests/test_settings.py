@@ -4,7 +4,7 @@ import json
 import unittest
 from unittest import mock
 
-from herdr_speak import catalog, paths, status
+from herdr_speak import catalog, icons, paths, status
 from herdr_speak import config as settings
 from tests.support import isolate
 
@@ -100,7 +100,7 @@ class StatusLineTest(unittest.TestCase):
         playing = {"state": "playing", "title": "Claude in work", "position": 75, "queued": 2}
         self.assertEqual(status.render(dict(plain, auto_read=True), playing), "▶ Claude in work 1:15 +2 · ↻")
         self.assertTrue(status.render(plain, dict(playing, state="paused")).startswith("‖"))
-        self.assertTrue(status.render({"icons": "nerd"}, playing).startswith("\uf04b"))
+        self.assertTrue(status.render({"icons": "nerd"}, playing).startswith(icons.NERD["play"]))
 
     def test_icon_sets_match_and_auto_detects_ghostty(self):
         from herdr_speak import icons

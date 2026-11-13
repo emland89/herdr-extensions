@@ -78,7 +78,8 @@ class HandleEventTest(unittest.TestCase):
         text, title = self.speak.call_args[0][:2]
         self.assertEqual(text, "Pi in work.\n\nDone.")
         self.assertEqual(title, "Pi in work")
-        self.assertEqual(self.speak.call_args[1], {"queue": True, "source": "auto"})
+        self.assertEqual(self.speak.call_args[1], {"queue": True, "source": "auto",
+                                                   "track": {"pane": "w1:p1", "index": 0, "count": 1}})
 
     def test_waits_for_the_transcript_instead_of_rereading_the_old_answer(self):
         config = {"auto_read": True, "announce": False}

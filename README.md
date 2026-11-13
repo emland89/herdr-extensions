@@ -4,7 +4,7 @@ Plugins for [Herdr](https://herdr.dev), the terminal workspace manager for codin
 
 | Plugin | What it does | Platforms |
 |---|---|---|
-| [Speak](herdr-speak/README.md) | Hear your coding agents: reads pi, Claude Code, and Codex responses aloud with a natural local voice, auto-reads finished turns, and plays with pause and seek. | macOS |
+| [Speak](herdr-speak/README.md) | Hear your coding agents: reads pi, Claude Code, Codex, and opencode responses aloud with a natural local voice, auto-reads finished turns, and plays with pause and seek. | macOS |
 
 ## Install a plugin
 

@@ -87,11 +87,70 @@ class TransportTest(unittest.TestCase):
         self.assertEqual(self.labels("idle")[0][2], "▶")
         self.assertEqual(self.labels("buffering")[0][2], "‖")
 
-    def test_restart_seeks_to_the_start(self):
+    def test_idle_buttons_are_live_when_there_is_a_pane_to_play(self):
+        dim = panel.transport("idle", indent="", labels=False).render()
+        live = panel.transport("idle", indent="", labels=False, ready=True).render()
+        self.assertIn(panel.DIM, dim)
+        self.assertNotIn(panel.DIM, live)
+
+    def test_prev_and_next_step_through_the_target_pane(self):
         controls = panel.Controls()
-        with mock.patch("herdr_speak.client.control", return_value=True) as control:
-            controls.playback_key("r")
-        control.assert_called_once_with("seek", seconds=-1e9)
+        controls.target = "w1:p1"
+        with mock.patch("herdr_speak.playlist.previous", return_value="") as previous, \
+                mock.patch("herdr_speak.playlist.next_response", return_value="That was the latest response") as nxt:
+            self.assertTrue(controls.playback_key("r"))
+            wait_for(lambda: not controls.busy)
+            self.assertTrue(controls.playback_key("n"))
+            wait_for(lambda: not controls.busy)
+        previous.assert_called_once_with("w1:p1")
+        nxt.assert_called_once_with("w1:p1")
+        self.assertIn("latest response", controls.message)
+
+    def test_play_when_idle_reads_the_target_pane(self):
+        controls = panel.Controls()
+        controls.target = "w1:p1"
+        with mock.patch("herdr_speak.client.playback", return_value={"state": "idle"}), \
+                mock.patch("herdr_speak.playlist.play") as play:
+            controls.playback_key("space")
+            wait_for(lambda: not controls.busy)
+        play.assert_called_once_with("w1:p1")
+
+
+def wait_for(condition, timeout: float = 5.0) -> None:
+    deadline = time.time() + timeout
+    while not condition() and time.time() < deadline:
+        time.sleep(0.01)
+
+
+class MiniRowTest(unittest.TestCase):
+    def test_bare_material_icons_in_player_order(self):
+        from herdr_speak import icons, mini
+
+        panel.use_icons({"icons": "nerd"})
+        line = mini.media_row("playing")
+        shown = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", line.render()).split()
+        self.assertEqual(shown, [icons.NERD[n] for n in ("restart", "back", "pause", "forward", "next", "stop")])
+        self.assertEqual([key for _, _, key in line.hotspots], ["r", "left", "space", "right", "n", "x"])
+        self.assertNotIn(panel.REVERSE, line.render())  # no button boxes
+        self.assertIn(panel.GREEN, line.render())  # play/pause stands out while playing
+        self.assertTrue(all(last - first == 2 for first, last, _ in line.hotspots))  # icon plus a cell each side
+
+    def test_settings_and_close_are_bare_icons_too(self):
+        from herdr_speak import icons, mini
+
+        panel.use_icons({"icons": "nerd"})
+        title = mini.lines({"auto_read": True}, {"state": "idle"}, 100, panel.Controls())[0]
+        self.assertNotIn(panel.REVERSE, title.render())
+        shown = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", title.render())
+        self.assertTrue(shown.endswith(f" {icons.NERD['settings']}    {icons.NERD['close']} "))
+        self.assertEqual([key for _, _, key in title.hotspots][-2:], ["s", "q"])
+
+    def test_dim_until_there_is_something_to_play(self):
+        from herdr_speak import mini
+
+        panel.use_icons({"icons": "plain"})
+        self.assertIn(panel.DIM, mini.media_row("idle").render())
+        self.assertNotIn(panel.DIM, mini.media_row("idle", ready=True).render())
 
 
 class ShortcutsTest(unittest.TestCase):

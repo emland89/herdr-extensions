@@ -1,7 +1,9 @@
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from herdr_speak import transcripts
 from tests.support import write_jsonl
@@ -62,8 +64,57 @@ class TranscriptTest(unittest.TestCase):
             self.assertEqual(transcripts.codex_transcript(None, "/work", home).name, "rollout-b.jsonl")
             self.assertIsNone(transcripts.codex_transcript(None, "/missing", home))
 
+    def opencode_db(self, schema: str, rows) -> Path:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        home = Path(directory.name)
+        root = home / ".local/share/opencode"
+        root.mkdir(parents=True)
+        db = sqlite3.connect(root / "opencode.db")
+        db.executescript(schema)
+        for table, values in rows:
+            db.execute(f"INSERT INTO {table} VALUES ({', '.join('?' * len(values))})", values)
+        db.commit()
+        db.close()
+        return home
+
+    def test_opencode_2_reads_the_last_assistant_text(self):
+        def message(seq, kind, content):
+            return "session_message", (f"m{seq}", "s1", kind, seq, json.dumps({"content": content}))
+
+        home = self.opencode_db("CREATE TABLE session_message (id, session_id, type, seq, data);", [
+            message(1, "assistant", [{"type": "text", "text": "old"}]),
+            message(2, "user", [{"type": "text", "text": "question"}]),
+            message(3, "assistant", [{"type": "reasoning", "text": "thinking"}, {"type": "text", "text": "answer"}]),
+            message(4, "assistant", [{"type": "tool", "name": "shell"}]),
+            message(5, "idle", {}),
+            ("session_message", ("x", "s2", "assistant", 9, json.dumps({"content": [{"type": "text", "text": "other"}]}))),
+            ("session_message", ("y", "s1", "assistant", 0, "{not json")),
+        ])
+        with mock.patch.dict("os.environ", {"XDG_DATA_HOME": ""}):
+            self.assertEqual(transcripts.last_opencode_message("s1", home), "answer")
+            self.assertIsNone(transcripts.last_opencode_message("missing", home))
+
+    def test_opencode_1_reads_parts_and_skips_synthetic_ones(self):
+        home = self.opencode_db("CREATE TABLE message (id, session_id, time_created, data);"
+                                "CREATE TABLE part (id, message_id, data);", [
+            ("message", ("m1", "s1", 1, json.dumps({"role": "assistant"}))),
+            ("part", ("p1", "m1", json.dumps({"type": "reasoning", "text": "hmm"}))),
+            ("part", ("p2", "m1", json.dumps({"type": "text", "text": "seventy-three"}))),
+            ("message", ("m2", "s1", 2, json.dumps({"role": "user"}))),
+            ("part", ("p3", "m2", json.dumps({"type": "text", "text": "tool output", "synthetic": True}))),
+        ])
+        with mock.patch.dict("os.environ", {"XDG_DATA_HOME": ""}):
+            self.assertEqual(transcripts.last_opencode_message("s1", home), "seventy-three")
+
+    def test_opencode_without_a_database_has_no_response(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict("os.environ", {"XDG_DATA_HOME": ""}):
+            self.assertIsNone(transcripts.last_opencode_message("s1", Path(directory)))
+
     def test_unsupported_and_unreported_agents_explain_why(self):
         with self.assertRaisesRegex(RuntimeError, "isn't supported"):
+            transcripts.last_response({"agent": "aider"})
+        with self.assertRaisesRegex(RuntimeError, "hasn't reported a session"):
             transcripts.last_response({"agent": "opencode"})
         with self.assertRaisesRegex(RuntimeError, "hasn't reported a session"):
             transcripts.last_response({"agent": "pi"})

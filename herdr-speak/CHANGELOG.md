@@ -2,6 +2,20 @@
 
 All notable changes to Speak. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-11-13
+
+### Added
+
+- opencode support: read its last response and auto-read its finished turns. Speak reads the session Herdr reports from opencode's SQLite database (opencode 2 and 1 layouts), opened read-only.
+- A pane's responses play like a playlist, one per turn. ⏮ plays the previous response (or restarts after the first 3 seconds) and ⏭ the next, in the mini player, the panel (`r` / `n`), the media keys, and the new `previous` and `next` actions. The player shows which response it is (`3/5`).
+- The mini player follows the agent pane you last worked in, in its tab: with nothing playing, Play reads that pane's latest response, so it works without keys. The panel's Play does the same for the pane it was opened from.
+
+### Changed
+
+- Next (⏭) plays the queue first, then the pane's next response; after the newest it stops. It used to only skip within the queue.
+- Previous (⏮) used to always restart the current response.
+- Nerd Font icons are now Material Design's media controls (rewind-5, fast-forward-5, skip previous / next), and the mini player draws its controls, settings, and close as bare icons, without button boxes, with play / pause highlighted.
+
 ## [0.3.0] - 2026-11-12
 
 ### Added

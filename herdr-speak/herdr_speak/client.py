@@ -212,11 +212,13 @@ def is_busy() -> bool:
     return playback().get("state", "idle") != "idle"
 
 
-def speak(text: str, title: str, config: dict, queue: bool = False, source: str = "manual") -> None:
+def speak(text: str, title: str, config: dict, queue: bool = False, source: str = "manual",
+          track: Optional[dict] = None) -> None:
+    """Speak text; `track` ({"pane", "index", "count"}) says which pane response it is."""
     speech = settings.speech_settings(config)
     if start_player():
         request({"command": "speak", "text": text, "title": title, "speech": speech, "queue": queue,
-                 "source": source})
+                 "source": source, "track": track})
         return
     if speech["engine"] == "kokoro":
         speech = dict(speech, engine="say", voice=settings.resolved_voice(config, "say"))

@@ -14,7 +14,7 @@ import time
 from contextlib import contextmanager
 from typing import Optional, Tuple
 
-from . import catalog, client, herdr, paths
+from . import catalog, client, herdr, paths, playlist
 from .text import clean_for_speech
 from .transcripts import SUPPORTED_AGENTS, last_response
 
@@ -118,6 +118,9 @@ def handle_event(config: dict, raw_event: str) -> None:
         time.sleep(0.5)
     else:
         return
-    announced = f"{title}.\n\n{spoken}" if config.get("announce", True) else spoken
-    client.speak(announced, title, config, queue=True, source="auto")
+    prefix = f"{title}.\n\n" if config.get("announce", True) else ""
+    try:
+        playlist.play(pane, config=config, agent=agent, queue=True, source="auto", prefix=prefix)
+    except playlist.NoTrack:
+        return
     remember(pane, spoken=digest)  # only once it was handed to the player

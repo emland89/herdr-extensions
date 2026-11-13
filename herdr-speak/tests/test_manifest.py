@@ -10,7 +10,7 @@ try:
 except ImportError:  # Python < 3.11
     tomllib = None
 
-COMMANDS = {"last", "selection", "stop", "toggle-pause", "forward", "back", "skip", "toggle-auto", "event",
+COMMANDS = {"last", "selection", "stop", "toggle-pause", "forward", "back", "skip", "previous", "next", "toggle-auto", "event",
             "panel", "open-panel", "mini", "mini-player", "follow", "setup"}
 ID = re.compile(r"^[A-Za-z0-9:_-]+$")  # Herdr's local id rule: no dots
 

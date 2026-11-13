@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from typing import Optional
+from typing import Optional, Tuple
 
-from . import catalog
+from . import catalog, paths
 from .text import plain_label
 from .transcripts import SUPPORTED_AGENTS
 
@@ -96,9 +96,39 @@ def pane_title(pane: str, agent: dict, language: Optional[str] = None) -> str:
     return plain_label(title)  # labels are user text; keep escape sequences out of the panel and tab bar
 
 
-def open_panel() -> None:
+PANEL_TARGET = "panel-target.json"  # the pane the panel was opened from, for its Play / Prev / Next
+
+
+def open_panel(target: Optional[str] = None, title: str = "") -> None:
+    try:
+        paths.STATE_DIR.mkdir(parents=True, exist_ok=True)
+        (paths.STATE_DIR / PANEL_TARGET).write_text(json.dumps({"pane": target, "title": title}))
+    except OSError:
+        pass
     run_json("plugin", "pane", "open", "--plugin", os.environ.get("HERDR_PLUGIN_ID") or "emilapps.speak",
              "--entrypoint", "panel", "--focus")
+
+
+def agent_target(pane: Optional[str], language: Optional[str] = None) -> Tuple[Optional[str], str]:
+    """(pane, title) when the pane runs an agent Speak reads, else (None, "")."""
+    if not pane:
+        return None, ""
+    try:
+        agent = agent_info(pane)
+    except (RuntimeError, OSError, subprocess.SubprocessError, ValueError):
+        return None, ""
+    if agent.get("agent") not in SUPPORTED_AGENTS:
+        return None, ""
+    return pane, pane_title(pane, agent, language)
+
+
+def panel_target() -> Tuple[Optional[str], str]:
+    try:
+        saved = json.loads((paths.STATE_DIR / PANEL_TARGET).read_text())
+        pane, title = saved.get("pane"), saved.get("title")
+    except (OSError, ValueError, AttributeError):
+        return None, ""
+    return (pane, plain_label(str(title or ""))) if isinstance(pane, str) else (None, "")
 
 
 def resize_to_rows(pane: str, rows: int) -> None:

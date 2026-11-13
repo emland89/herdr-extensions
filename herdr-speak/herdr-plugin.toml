@@ -1,8 +1,8 @@
 id = "emilapps.speak"
 name = "Speak"
-version = "0.3.0"
+version = "0.4.0"
 min_herdr_version = "0.9.5"
-description = "Hear your coding agents: read pi, Claude Code, and Codex responses aloud with a natural local voice, auto-read finished turns, pause and seek."
+description = "Hear your coding agents: read pi, Claude Code, Codex, and opencode responses aloud with a natural local voice, auto-read finished turns, pause and seek."
 platforms = ["macos"]
 
 # Installs the Kokoro voice runtime (about 600 MB) under ~/.local/share/herdr-speak.
@@ -14,7 +14,7 @@ command = ["python3", "speak.py", "setup", "--build"]
 [[actions]]
 id = "read-last"
 title = "Speak: Read Last Response"
-description = "Read the focused pane's last pi, Claude Code, or Codex response; stops speech if playing"
+description = "Read the focused pane's last pi, Claude Code, Codex, or opencode response; stops speech if playing"
 contexts = ["workspace", "pane"]
 command = ["python3", "speak.py", "last"]
 
@@ -63,6 +63,20 @@ title = "Speak: Skip to Next"
 description = "Skip the current response and play the next queued one"
 contexts = ["workspace", "pane"]
 command = ["python3", "speak.py", "skip"]
+
+[[actions]]
+id = "previous"
+title = "Speak: Previous Response"
+description = "Play the focused pane's previous response (restarts the current one after its first seconds)"
+contexts = ["workspace", "pane"]
+command = ["python3", "speak.py", "previous"]
+
+[[actions]]
+id = "next"
+title = "Speak: Next Response"
+description = "Play the next queued item, else the pane's next response"
+contexts = ["workspace", "pane"]
+command = ["python3", "speak.py", "next"]
 
 [[actions]]
 id = "stop"

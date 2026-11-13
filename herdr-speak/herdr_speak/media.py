@@ -10,6 +10,7 @@ fields are plain functions, testable without PyObjC.
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import Callable, Dict, Optional
 
@@ -17,11 +18,30 @@ SKIP_SECONDS = 5
 RELEASE_AFTER_PAUSE = 300  # seconds paused before the media keys go back to other players
 
 
-def handle_command(speaker, name: str, position: Optional[float] = None) -> bool:
-    """Apply a media command to the player; False when nothing is playing."""
+def step_playlist(name: str) -> None:
+    """Previous / next response, off the run loop: it calls Herdr and then this player's own socket."""
+    from . import playlist
+
+    def run() -> None:
+        try:
+            (playlist.previous if name == "previous" else playlist.next_response)()
+        except Exception:  # noqa: S110  (a media key has nowhere to report; the player keeps going)
+            pass
+
+    threading.Thread(target=run, daemon=True).start()
+
+
+def handle_command(speaker, name: str, position: Optional[float] = None,
+                   step: Optional[Callable[[str], None]] = None) -> bool:
+    """Apply a media command to the player; False when nothing is playing.
+
+    With `step`, previous and next move through the pane's responses when a pane response plays.
+    """
     if not speaker.busy():
         return False
-    if name == "toggle":
+    if name in ("next", "previous") and step is not None and speaker.snapshot().get("track"):
+        step(name)
+    elif name == "toggle":
         speaker.set_paused(None)
     elif name == "play":
         speaker.set_paused(False)
@@ -104,7 +124,7 @@ class MediaControls:
 
             def handler(event, name=name):
                 position = event.positionTime() if name == "position" else None
-                ok = handle_command(self.speaker, name, position)
+                ok = handle_command(self.speaker, name, position, step_playlist)
                 self.last = None  # push fresh info right away
                 return success if ok else failed
 

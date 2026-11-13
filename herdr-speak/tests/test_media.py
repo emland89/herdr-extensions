@@ -36,6 +36,15 @@ class HandleCommandTest(unittest.TestCase):
         self.assertEqual(speaker.calls, [("paused", None), ("paused", False), ("paused", True), ("skip",),
                                          ("seek", -1e9), ("seek", 5), ("seek", -5), ("seek", 18.0)])
 
+    def test_previous_and_next_step_through_a_panes_responses(self):
+        speaker = FakeSpeaker()
+        speaker.snapshot = lambda: {"state": "playing", "track": {"pane": "w1:p1", "index": 1, "count": 3}}
+        steps = []
+        for name in ("previous", "next"):
+            self.assertTrue(media.handle_command(speaker, name, step=steps.append))
+        self.assertEqual(steps, ["previous", "next"])
+        self.assertEqual(speaker.calls, [])  # the playlist does it, not the player directly
+
     def test_nothing_happens_when_idle(self):
         speaker = FakeSpeaker(busy=False)
         self.assertFalse(media.handle_command(speaker, "toggle"))

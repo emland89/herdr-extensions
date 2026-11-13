@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import unittest
 from unittest import mock
 
@@ -46,6 +47,11 @@ class MiniLocationTest(unittest.TestCase):
         # A live process whose command line looks like the mini player.
         self.process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", "speak.py mini"])
         self.addCleanup(lambda: (self.process.kill(), self.process.wait()))
+        # ps can show a just-started process's command line a moment late; wait until it's visible.
+        deadline = time.time() + 5
+        while "speak.py mini" not in subprocess.run(["/bin/ps", "-o", "command=", "-p", str(self.process.pid)],
+                                                    capture_output=True, text=True).stdout and time.time() < deadline:
+            time.sleep(0.02)
 
     def running_mini(self, tab="w1:t1"):
         mini.write_state("w1:p9", tab, self.process.pid)

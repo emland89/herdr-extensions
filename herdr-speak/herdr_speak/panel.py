@@ -11,7 +11,7 @@ from __future__ import annotations
 import threading
 from typing import Callable, List, Optional, Tuple
 
-from . import __version__, catalog, client, icons, paths, runtime, shortcuts, status
+from . import __version__, catalog, client, herdr, icons, paths, playlist, runtime, shortcuts, status
 from . import config as settings
 from .ui import BOLD, CYAN, DIM, GREEN, RED, REVERSE, YELLOW, Line, Screen, button, progress_bar
 
@@ -36,8 +36,8 @@ HINT_COLUMN = 64  # key hints after checkboxes line up here
 
 # Keys that work on every tab, for the Shortcuts tab.
 PANEL_KEYS = [
-    ("1-5, Tab", "Switch tab"), ("space", "Pause / resume"), ("← →", "Back / forward 5 seconds"),
-    ("r  n  x", "Restart / next response / stop"), ("t", "Test the voice"), ("a f m b", "Auto-read settings"),
+    ("1-5, Tab", "Switch tab"), ("space", "Pause / resume, or play the pane"), ("← →", "Back / forward 5 seconds"),
+    ("r  n  x", "Previous / next response / stop"), ("t", "Test the voice"), ("a f m b", "Auto-read settings"),
     ("l v s o", "Language, voice, speed, model"), ("p", "Mini player follows you between tabs"), ("k", "Media keys"),
     ("↑ ↓ Enter", "Choose in an open dropdown"),
     ("i", "Install or repair the voice"), ("q, Esc", "Close (Esc closes a dropdown first)"),
@@ -76,6 +76,8 @@ class Controls:
     def __init__(self):
         self.message = ""
         self.busy = ""
+        self.target: Optional[str] = None  # the agent pane that play, previous, and next use when idle
+        self.target_title = ""
 
     def note(self, message: str, style: str = DIM) -> None:
         self.message = f"{style}{message}"
@@ -88,12 +90,17 @@ class Controls:
             self.note(str(error), YELLOW)
 
     def in_background(self, label: str, work: Callable[[], object]) -> None:
+        """Run work off the drawing loop; a string it returns is shown as a note."""
         self.busy = label
 
         def run() -> None:
             try:
-                work()
+                result = work()
                 self.message = ""
+                if isinstance(result, str) and result:
+                    self.note(result)
+            except playlist.NoTrack as error:
+                self.note(str(error))
             except Exception as error:  # shown in the panel
                 self.note(str(error), RED)
             finally:
@@ -104,15 +111,18 @@ class Controls:
     def playback_key(self, key: str) -> bool:
         """Handle a playback key; False when the key isn't one."""
         if key == "space":
-            self.run("toggle-pause")
+            if self.target and client.playback().get("state", "idle") == "idle":
+                self.in_background("Loading", lambda: playlist.play(self.target))
+            else:
+                self.run("toggle-pause")
         elif key in ("left", ","):
             self.run("seek", seconds=-SEEK_SECONDS)
         elif key in ("right", "."):
             self.run("seek", seconds=SEEK_SECONDS)
         elif key == "n":
-            self.run("skip")
+            self.in_background("Loading", lambda: playlist.next_response(self.target))
         elif key == "r":
-            self.run("seek", seconds=-1e9)  # back to the start of the current response
+            self.in_background("Loading", lambda: playlist.previous(self.target))
         elif key == "x":
             try:
                 client.stop()
@@ -130,11 +140,22 @@ class Controls:
 # ---------------------------------------------------------------- shared widgets
 
 
-def player_lines(playback: dict, width: int, indent: str = "  ") -> List[Line]:
-    """Title with the time at the right edge, then a full-width progress bar."""
+def track_label(playback: dict) -> str:
+    """'3/5' for a pane response: which response of the pane's turns this is."""
+    track = playback.get("track")
+    return f"{track['index'] + 1}/{track['count']}" if isinstance(track, dict) and "index" in track else ""
+
+
+def player_lines(playback: dict, width: int, indent: str = "  ", ready: str = "") -> List[Line]:
+    """Title with the time at the right edge, then a full-width progress bar.
+
+    `ready`: the pane that Play would read when nothing is playing.
+    """
     state = playback.get("state", "idle")
     if state == "idle":
-        return [Line().add(f"{indent}Nothing playing", DIM), Line().add(f"{indent}{progress_bar(0, width - 2 * len(indent))}")]
+        head = Line().add(f"{indent}{ic('play')} {ready}", BOLD).add("  latest response", DIM) if ready else \
+            Line().add(f"{indent}Nothing playing", DIM)
+        return [head, Line().add(f"{indent}{progress_bar(0, width - 2 * len(indent))}")]
     icon = ic({"playing": "play", "paused": "pause", "buffering": "buffering"}.get(state, "play"))
     position, duration = playback.get("position", 0), playback.get("duration", 0)
     right = ""
@@ -142,6 +163,7 @@ def player_lines(playback: dict, width: int, indent: str = "  ") -> List[Line]:
         total = ("" if playback.get("complete", True) else "~") + status.clock(duration)
         queued = playback.get("queued", 0)
         right = f"{status.clock(position)} / {total}" + (f"   +{queued} queued" if queued else "")
+        right = (f"{track_label(playback)}   " if track_label(playback) else "") + right
     title = (playback.get("title") or "Speak")[: max(10, width - len(right) - len(indent) * 2 - 4)]
     head = Line().add(f"{indent}{icon} {title}", BOLD)
     head.add(" " * max(1, width - head.width - len(right) - len(indent))).add(right, DIM)
@@ -151,17 +173,18 @@ def player_lines(playback: dict, width: int, indent: str = "  ") -> List[Line]:
     return [head, Line().add(indent).add(progress_bar(position / duration if duration else 0, bar_width))]
 
 
-def transport(state: str, indent: str = "  ", labels: bool = True) -> Line:
-    """Media controls in the usual order: restart, back, play/pause, forward, next, stop.
+def transport(state: str, indent: str = "  ", labels: bool = True, ready: bool = False) -> Line:
+    """Media controls in the usual order: previous, back, play/pause, forward, next, stop.
 
     The middle button shows what it will do: pause while playing, play otherwise.
+    `ready`: nothing plays but there's a pane to play, so the buttons are live.
     """
     playing = state in ("playing", "buffering")
     middle = (ic("pause"), "Pause") if playing else (ic("play"), "Play")
-    controls = [(ic("restart"), "", "r"), (ic("back"), "5s", "left"), (middle[0], middle[1], "space"),
+    controls = [(ic("restart"), "Prev", "r"), (ic("back"), "5s", "left"), (middle[0], middle[1], "space"),
                 (ic("forward"), "5s", "right"), (ic("next"), "Next", "n"), (ic("stop"), "Stop", "x")]
     line = Line().add(indent)
-    idle = state == "idle"
+    idle = state == "idle" and not ready
     for icon, label, key in controls:
         text = f"{icon} {label}" if labels and label else icon
         if key == "space":
@@ -195,6 +218,7 @@ def stepper(line: Line, value: str, minus: str, plus: str, key: str) -> Line:
 class Panel:
     def __init__(self):
         self.controls = Controls()
+        self.controls.target, self.controls.target_title = herdr.panel_target()
         self.tab = self.load_tab()
         self.dropdown: Optional[str] = None  # the open dropdown's setting name
         self.highlight = 0  # keyboard position inside the open dropdown
@@ -264,8 +288,9 @@ class Panel:
 
     def player_tab(self, config: dict, playback: dict, width: int) -> List[Line]:
         lines = [heading("Now playing", width)]
-        lines += player_lines(playback, width)
-        lines += [transport(playback.get("state", "idle")), Line(), heading("Quick settings", width)]
+        lines += player_lines(playback, width, ready=self.controls.target_title)
+        lines += [transport(playback.get("state", "idle"), ready=bool(self.controls.target)), Line(),
+                  heading("Quick settings", width)]
         voice = field("Voice", "tab:2").add(settings.voice_label(config), BOLD, "tab:2").add("   ")
         button(voice, f"{ic('settings')} Change", "tab:2")
         button(voice, f"{ic('play')} Test", "t")

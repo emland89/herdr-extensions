@@ -156,9 +156,20 @@ class SayEngine:
 # ---------------------------------------------------------------- playback
 
 
+def clean_track(track) -> Optional[dict]:
+    """{"pane", "index", "count"} for a response read from an agent pane, else None."""
+    if not isinstance(track, dict):
+        return None
+    pane, index, count = track.get("pane"), track.get("index"), track.get("count")
+    if not (isinstance(pane, str) and isinstance(index, int) and isinstance(count, int) and 0 <= index < count):
+        return None
+    return {"pane": plain_label(pane)[:64], "index": index, "count": count}
+
+
 class Item:
-    def __init__(self, title: str, texts: List[str], speech: dict, source: str):
+    def __init__(self, title: str, texts: List[str], speech: dict, source: str, track: Optional[dict] = None):
         self.title = plain_label(title)
+        self.track = clean_track(track)  # where the text came from, for previous / next response
         self.texts = texts
         self.speech = speech
         self.source = source
@@ -219,8 +230,9 @@ class Speaker:
 
     # -- commands
 
-    def speak(self, text: str, title: str, speech: dict, queue: bool, source: str = "manual") -> None:
-        item = Item(title, paragraphs(text), speech, source)
+    def speak(self, text: str, title: str, speech: dict, queue: bool, source: str = "manual",
+              track: Optional[dict] = None) -> None:
+        item = Item(title, paragraphs(text), speech, source, track)
         with self.lock:
             if not queue:
                 self.items.clear()
@@ -275,6 +287,7 @@ class Speaker:
                 "queued": len(self.items) - 1,
                 "voice": item.speech.get("voice"),
                 "paused_seconds": time.time() - self.paused_at if self.paused else 0.0,
+                "track": item.track,
             }
 
     def busy(self) -> bool:
@@ -418,7 +431,7 @@ class Daemon:
         speaker = self.speaker
         if command == "speak":
             speaker.speak(request["text"], request.get("title") or "Speak", request["speech"],
-                          bool(request.get("queue")), request.get("source") or "manual")
+                          bool(request.get("queue")), request.get("source") or "manual", request.get("track"))
             with self.output_lock:
                 self.output.start()
         elif command == "stop":

@@ -8,8 +8,10 @@ untrusted data: it is only ever spoken, never executed.
 from __future__ import annotations
 
 import json
+import os
+import sqlite3
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from .paths import HOME
 
@@ -41,51 +43,101 @@ def _text_blocks(content) -> str:
     return "\n\n".join(part for part in parts if part.strip())
 
 
-def last_pi_message(path: Path) -> Optional[str]:
-    last = None
+class _Turns:
+    """Collects one response per turn: the last text the agent wrote before the next prompt."""
+
+    def __init__(self):
+        self.responses: List[str] = []
+        self.current: Optional[str] = None
+
+    def prompt(self) -> None:
+        if self.current:
+            self.responses.append(self.current)
+        self.current = None
+
+    def text(self, text) -> None:
+        if isinstance(text, str) and text.strip():
+            self.current = text
+
+    def done(self) -> List[str]:
+        self.prompt()
+        return self.responses
+
+
+def pi_responses(path: Path) -> List[str]:
+    turns = _Turns()
     for entry in _jsonl(path):
         message = entry.get("message")
-        if entry.get("type") == "message" and isinstance(message, dict) and message.get("role") == "assistant":
-            text = _text_blocks(message.get("content"))
-            if text.strip():
-                last = text
-    return last
+        if entry.get("type") != "message" or not isinstance(message, dict):
+            continue
+        if message.get("role") == "user":
+            turns.prompt()
+        elif message.get("role") == "assistant":
+            turns.text(_text_blocks(message.get("content")))
+    return turns.done()
 
 
-def last_claude_message(path: Path) -> Optional[str]:
-    # One API message is stored as several entries (one per content block)
-    # sharing message.id; join the text blocks of the last one that has text.
-    last_id, chunks = None, []
+def _claude_prompt(entry: dict) -> bool:
+    """A prompt the user typed, not a tool result or an injected (meta) message."""
+    message = entry.get("message")
+    if entry.get("type") != "user" or entry.get("isSidechain") or entry.get("isMeta") or not isinstance(message, dict):
+        return False
+    content = message.get("content")
+    return isinstance(content, str) or (
+        isinstance(content, list) and not any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content))
+
+
+def claude_responses(path: Path) -> List[str]:
+    # One API message is stored as several entries (one per content block) sharing
+    # message.id; a turn's response is the text blocks of its last message with text.
+    turns, last_id, chunks = _Turns(), None, []
     for entry in _jsonl(path):
+        if _claude_prompt(entry):
+            turns.prompt()
+            last_id, chunks = None, []
+            continue
         message = entry.get("message")
         if entry.get("type") != "assistant" or entry.get("isSidechain") or not isinstance(message, dict):
             continue
         text = _text_blocks(message.get("content"))
         if not text.strip():
             continue
-        message_id = message.get("id")
-        if message_id != last_id:
-            last_id, chunks = message_id, []
+        if message.get("id") != last_id:
+            last_id, chunks = message.get("id"), []
         chunks.append(text)
-    return "\n\n".join(chunks) or None
+        turns.text("\n\n".join(chunks))
+    return turns.done()
 
 
-def last_codex_message(path: Path) -> Optional[str]:
-    last = None
+def codex_responses(path: Path) -> List[str]:
+    turns = _Turns()
     for entry in _jsonl(path):
         payload = entry.get("payload")
         if not isinstance(payload, dict):
             continue
-        if entry.get("type") == "event_msg" and payload.get("type") == "task_complete":
-            text = payload.get("last_agent_message")
-            text = text if isinstance(text, str) else ""
+        if entry.get("type") == "event_msg" and payload.get("type") == "task_started":
+            turns.prompt()
+        elif entry.get("type") == "event_msg" and payload.get("type") == "task_complete":
+            turns.text(payload.get("last_agent_message"))
         elif entry.get("type") == "response_item" and payload.get("type") == "message" and payload.get("role") == "assistant":
-            text = _text_blocks(payload.get("content"))
-        else:
-            continue
-        if text.strip():
-            last = text
-    return last
+            turns.text(_text_blocks(payload.get("content")))
+    return turns.done()
+
+
+def _last(responses: List[str]) -> Optional[str]:
+    return responses[-1] if responses else None
+
+
+def last_pi_message(path: Path) -> Optional[str]:
+    return _last(pi_responses(path))
+
+
+def last_claude_message(path: Path) -> Optional[str]:
+    return _last(claude_responses(path))
+
+
+def last_codex_message(path: Path) -> Optional[str]:
+    return _last(codex_responses(path))
 
 
 def claude_transcript(session_id: str, home: Path = HOME) -> Optional[Path]:
@@ -110,21 +162,119 @@ def codex_transcript(session_id: Optional[str], cwd: Optional[str], home: Path =
     return None
 
 
-SUPPORTED_AGENTS = {"pi": "Pi", "claude": "Claude", "codex": "Codex"}
+def opencode_databases(home: Path = HOME) -> List[Path]:
+    """opencode's session databases, the default one first (other channels write opencode-<channel>.db)."""
+    root = Path(os.environ.get("XDG_DATA_HOME") or home / ".local/share") / "opencode"
+    others = sorted(root.glob("opencode-*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return [path for path in [root / "opencode.db", *others] if path.is_file()]
+
+
+def _json(data):
+    try:
+        value = json.loads(data)
+    except (TypeError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+# The newest messages are enough: older turns are rarely replayed, and long sessions hold thousands.
+OPENCODE_ROWS = 3000
+
+
+def _opencode_v2(db: sqlite3.Connection, session_id: str) -> List[str]:
+    # opencode 2: one row per message, its text, reasoning, and tool blocks in data.content
+    # A turn ends when the session goes idle or a prompt arrives: the user's, or a goal's
+    # "continue" message in goal mode, which can run for hours without one.
+    rows = db.execute("SELECT type, data FROM session_message WHERE session_id = ? "
+                      "AND type IN ('user', 'assistant', 'idle', 'synthetic') ORDER BY seq DESC LIMIT ?",
+                      (session_id, OPENCODE_ROWS)).fetchall()
+    turns = _Turns()
+    for kind, data in reversed(rows):
+        message = _json(data)
+        if kind in ("user", "idle"):
+            turns.prompt()
+        elif message is None:
+            continue
+        elif kind == "assistant":
+            turns.text(_text_blocks(message.get("content")))
+        elif (message.get("metadata") or {}).get("source") == "goal":
+            turns.prompt()
+    return turns.done()
+
+
+def _opencode_v1(db: sqlite3.Connection, session_id: str) -> List[str]:
+    # opencode 1: messages and their parts in separate tables
+    rows = db.execute("SELECT m.id, m.data, p.data FROM (SELECT id, data, time_created FROM message WHERE session_id = ? "
+                      "ORDER BY time_created DESC, id DESC LIMIT ?) m LEFT JOIN part p ON p.message_id = m.id "
+                      "ORDER BY m.time_created, m.id, p.id", (session_id, OPENCODE_ROWS)).fetchall()
+    turns, current, parts = _Turns(), None, []
+
+    def finish() -> None:
+        if current is not None and current.get("role") == "assistant":
+            turns.text(_text_blocks(parts))
+
+    last_id = None
+    for message_id, data, part_data in rows:
+        if message_id != last_id:
+            finish()
+            last_id, current, parts = message_id, _json(data), []
+            if current is not None and current.get("role") == "user":
+                turns.prompt()
+        part = _json(part_data)
+        if part is not None and not part.get("synthetic") and not part.get("ignored"):
+            parts.append(part)
+    finish()
+    return turns.done()
+
+
+def opencode_responses(session_id: str, home: Path = HOME) -> List[str]:
+    """An opencode session's responses, read from its SQLite database without writing to it."""
+    for path in opencode_databases(home):
+        try:
+            db = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, timeout=2)
+        except sqlite3.Error:
+            continue
+        try:
+            for reader in (_opencode_v2, _opencode_v1):
+                try:
+                    responses = reader(db, session_id)
+                except sqlite3.OperationalError:  # this schema's tables don't exist in this database
+                    continue
+                if responses:
+                    return responses
+        except sqlite3.Error:
+            continue
+        finally:
+            db.close()
+    return []
+
+
+def last_opencode_message(session_id: str, home: Path = HOME) -> Optional[str]:
+    return _last(opencode_responses(session_id, home))
+
+
+SUPPORTED_AGENTS = {"pi": "Pi", "claude": "Claude", "codex": "Codex", "opencode": "opencode"}
+
+
+def responses(agent: dict) -> List[str]:
+    """Every response of the agent described by `herdr agent get` (or a `pane list` entry), oldest first."""
+    kind = agent.get("agent")
+    value = (agent.get("agent_session") or {}).get("value")
+    if kind == "pi" and value:
+        return pi_responses(Path(value))
+    if kind == "claude" and value:
+        path = claude_transcript(value)
+        return claude_responses(path) if path else []
+    if kind == "codex":
+        path = codex_transcript(value, agent.get("foreground_cwd") or agent.get("cwd"))
+        return codex_responses(path) if path else []
+    if kind == "opencode" and value:
+        return opencode_responses(value)
+    if kind in SUPPORTED_AGENTS:
+        raise RuntimeError(f"Herdr hasn't reported a session for {SUPPORTED_AGENTS[kind]} in this pane yet")
+    raise RuntimeError(f"Reading responses from {kind or 'this pane'} isn't supported")
 
 
 def last_response(agent: dict) -> Optional[str]:
     """The last response of the agent described by `herdr agent get`."""
-    kind = agent.get("agent")
-    value = (agent.get("agent_session") or {}).get("value")
-    if kind == "pi" and value:
-        return last_pi_message(Path(value))
-    if kind == "claude" and value:
-        path = claude_transcript(value)
-        return last_claude_message(path) if path else None
-    if kind == "codex":
-        path = codex_transcript(value, agent.get("foreground_cwd") or agent.get("cwd"))
-        return last_codex_message(path) if path else None
-    if kind in SUPPORTED_AGENTS:
-        raise RuntimeError(f"Herdr hasn't reported a session for {SUPPORTED_AGENTS[kind]} in this pane yet")
-    raise RuntimeError(f"Reading responses from {kind or 'this pane'} isn't supported")
+    return _last(responses(agent))

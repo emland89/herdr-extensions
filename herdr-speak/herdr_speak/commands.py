@@ -7,10 +7,9 @@ import os
 import sys
 import traceback
 
-from . import autoread, catalog, client, herdr, paths, runtime, status
+from . import autoread, catalog, client, herdr, paths, playlist, runtime, status
 from . import config as settings
 from .text import clean_for_speech
-from .transcripts import last_response
 
 SEEK_SECONDS = 5
 
@@ -20,18 +19,33 @@ def read(mode: str) -> int:
     if client.stop():
         return 0
     config = settings.load()
-    language = config["language"]
-    if mode == "selection":
-        raw, title = herdr.selected_text(), "Selection"
-    else:
-        pane = herdr.target_pane()
-        agent = herdr.agent_info(pane)
-        raw, title = last_response(agent), herdr.pane_title(pane, agent, language)
-    text = clean_for_speech(raw or "", language)
+    if mode == "last":
+        try:
+            playlist.play(herdr.target_pane(), config=config)
+        except playlist.NoTrack as error:
+            herdr.notify(str(error))
+            return 1
+        return 0
+    text = clean_for_speech(herdr.selected_text() or "", config["language"])
     if not text:
-        herdr.notify("Nothing selected" if mode == "selection" else "No response to read yet")
+        herdr.notify("Nothing selected")
         return 1
-    client.speak(text, title, config)
+    client.speak(text, "Selection", config)
+    return 0
+
+
+def step(direction: str) -> int:
+    """previous / next response of the focused pane, or of what's playing."""
+    try:
+        pane = herdr.target_pane()
+    except RuntimeError:
+        pane = None
+    try:
+        note = (playlist.previous if direction == "previous" else playlist.next_response)(pane)
+    except playlist.NoTrack as error:
+        note = str(error)
+    if note:
+        herdr.notify(note)
     return 0
 
 
@@ -157,8 +171,8 @@ def doctor() -> int:
 def main(argv: list) -> int:
     parser = argparse.ArgumentParser(prog="speak.py", description="Speak: hear your coding agents in Herdr.")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("last", "selection", "stop", "toggle-pause", "forward", "back", "skip", "toggle-auto", "event",
-                 "panel", "open-panel", "mini", "mini-player", "follow", "keybindings", "bind", "unbind", "doctor",
+    for name in ("last", "selection", "stop", "toggle-pause", "forward", "back", "skip", "previous", "next", "toggle-auto",
+                 "event", "panel", "open-panel", "mini", "mini-player", "follow", "keybindings", "bind", "unbind", "doctor",
                  "statusline"):
         sub.add_parser(name)
     setup_parser = sub.add_parser("setup", help="install the Kokoro voice runtime, model, and voices")
@@ -183,6 +197,8 @@ def main(argv: list) -> int:
             return control("skip")
         if command == "toggle-auto":
             return toggle_auto()
+        if command in ("previous", "next"):
+            return step(command)
         if command == "event":
             autoread.handle_event(settings.load(), os.environ.get("HERDR_PLUGIN_EVENT_JSON", ""))
             return 0
@@ -191,7 +207,11 @@ def main(argv: list) -> int:
 
             return run()
         if command == "open-panel":
-            herdr.open_panel()
+            try:
+                pane = herdr.target_pane()
+            except RuntimeError:
+                pane = None
+            herdr.open_panel(*herdr.agent_target(pane, settings.load().get("language")))
             return 0
         if command == "mini":
             from .mini import run as run_mini
